@@ -1,0 +1,20 @@
+{
+  "name": "training-load-dashboard",
+  "version": "1.0.0",
+  "description": "Training Load Dashboard (Intervals.icu) — portage Node.js du dashboard Streamlit",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.7",
+    "dotenv": "^16.4.5",
+    "ejs": "^3.1.10",
+    "express": "^4.21.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

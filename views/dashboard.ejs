@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <%- include('partials/head', { pageTitle: 'Training Load Dashboard' }) %>
+</head>
+<body>
+  <%- include('partials/nav') %>
+
+  <main>
+    <h1>Training Load Dashboard</h1>
+    <p class="caption">Intervals.icu API → charge Foster, CAP et vélo</p>
+
+    <% if (apiKeyMissing) { %>
+      <div class="alert alert-info">
+        Renseigne <code>INTERVALS_API_KEY</code> dans le fichier <code>.env</code> à la racine du projet
+        (Settings → Developer Settings → API Key sur Intervals.icu), puis redémarre le serveur.
+      </div>
+    <% } else if (error) { %>
+      <div class="alert alert-error">Impossible de récupérer les données Intervals.icu : <%= error %></div>
+    <% } else if (bootstrapData && bootstrapData.empty) { %>
+      <div class="alert alert-warning"><%= bootstrapData.message %></div>
+    <% } %>
+
+    <% if (!apiKeyMissing && !error) { %>
+      <div class="card" id="filters-card">
+        <div class="filters">
+          <div class="field">
+            <label for="athleteSelect">👤 Athlète</label>
+            <select id="athleteSelect">
+              <% athletes.forEach(a => { %>
+                <option value="<%= a.id %>" <%= a.id === params.athleteId ? 'selected' : '' %>><%= a.label %></option>
+              <% }) %>
+            </select>
+          </div>
+          <div class="field">
+            <label for="historyStart">Début d'analyse</label>
+            <input type="date" id="historyStart" value="<%= params.historyStart %>" />
+          </div>
+          <div class="range-field">
+            <label for="forecastWeeks">Horizon planifié (semaines)</label>
+            <input type="range" id="forecastWeeks" min="1" max="26" value="<%= params.forecastWeeks || 8 %>" />
+            <output id="forecastWeeksOut"><%= params.forecastWeeks || 8 %> semaines</output>
+          </div>
+        </div>
+        <div class="field" style="margin-top:14px;">
+          <label>Activités</label>
+          <div class="field-types" id="typesFilter"></div>
+        </div>
+      </div>
+
+      <div id="dashboard-content"></div>
+    <% } %>
+  </main>
+
+  <script>
+    window.__BOOTSTRAP__ = <%- JSON.stringify({ params, data: bootstrapData }) %>;
+  </script>
+  <script src="/vendor/format.js"></script>
+  <script src="/js/dashboard.js"></script>
+</body>
+</html>
