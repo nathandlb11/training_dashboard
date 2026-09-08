@@ -11,6 +11,15 @@ function getApiKey(req) {
   return process.env.INTERVALS_API_KEY || '';
 }
 
+// Protège les endpoints JSON publics (ex. widget iOS) via ?token=... si WIDGET_TOKEN est défini.
+// Si la variable d'env n'est pas définie, aucun changement de comportement (pas d'auth, comme avant).
+function requireWidgetToken(req, res, next) {
+  const expected = process.env.WIDGET_TOKEN;
+  if (!expected) return next();
+  if (req.query.token === expected) return next();
+  return res.status(401).json({ error: 'Token invalide ou manquant.' });
+}
+
 function parseQuery(req) {
   const today = todayIso();
   return {
@@ -58,7 +67,7 @@ router.get('/dashboard', async (req, res) => {
   });
 });
 
-router.get('/api/dashboard-data', async (req, res) => {
+router.get('/api/dashboard-data', requireWidgetToken, async (req, res) => {
   const apiKey = getApiKey(req);
   if (!apiKey) return res.status(400).json({ error: 'Clé API Intervals.icu manquante.' });
 
