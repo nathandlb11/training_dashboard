@@ -145,6 +145,91 @@ function buildForecast(rawFutureEvents) {
   return { forecastDaily, totalPlannedDaily, raceEvents, planRunWeekly, planBikeWeekly, planRaceWeekly, notes, debugRaw };
 }
 
+/**
+ * Séances (planifiées et/ou réelles) de la semaine en cours (lundi -> dimanche), pour un widget
+ * de suivi d'avancement. Une séance planifiée est "réalisée" si son événement calendrier porte un
+ * `activity_id` (lien Intervals.icu vers l'activité réelle) ; les activités réelles de la semaine
+ * non liées à un événement planifié sont ajoutées à part (séances "hors plan").
+ */
+function buildCurrentWeekSessions(rawFutureEvents, df) {
+  const today = todayIso();
+  const weekStart = weekStartMonday(today);
+  const weekEnd = addDaysIso(weekStart, 6);
+
+  const weekRows = (rawFutureEvents || [])
+    .map((e) => ({ ...e, date: dateOnly(e.start_date_local || e.start_date), category: String(e.category || '').toUpperCase() }))
+    .filter((e) => e.date && compareIso(e.date, weekStart) >= 0 && compareIso(e.date, weekEnd) <= 0);
+
+  const plannedRows = weekRows.filter((e) => ['WORKOUT', 'PLAN', 'RACE_A', 'RACE_B', 'RACE_C'].includes(e.category));
+
+  const dfById = new Map(df.filter((a) => a.id != null).map((a) => [String(a.id), a]));
+  const linkedActivityIds = new Set(
+    plannedRows.filter((e) => e.activity_id != null).map((e) => String(e.activity_id))
+  );
+
+  const plannedSessions = plannedRows.map((e) => {
+    const isRace = e.category.startsWith('RACE');
+    const movingTime = NUM(e.moving_time, 0);
+    const rpe = isRace ? sessionLoad.race.rpe : effectiveRpeForPlanned(e.type, e.name, e.icu_rpe);
+    const plannedLoad = (rpe * movingTime) / 60;
+    const real = e.activity_id != null ? dfById.get(String(e.activity_id)) : null;
+    const done = !!real;
+
+    let status;
+    if (done) status = 'done';
+    else if (compareIso(e.date, today) < 0) status = 'missed';
+    else if (e.date === today) status = 'today';
+    else status = 'upcoming';
+
+    return {
+      date: e.date,
+      name: e.name || '',
+      type: e.type || '',
+      isRace,
+      planned: true,
+      done,
+      status,
+      plannedLoad: Math.round(plannedLoad),
+      plannedTime: fmtTime(movingTime),
+      realLoad: real ? Math.round(real.foster_load) : null,
+      realTime: real ? fmtTime(real.moving_time) : null,
+    };
+  });
+
+  const extraSessions = df
+    .filter(
+      (a) =>
+        a.date &&
+        compareIso(a.date, weekStart) >= 0 &&
+        compareIso(a.date, weekEnd) <= 0 &&
+        !(a.id != null && linkedActivityIds.has(String(a.id)))
+    )
+    .map((a) => ({
+      date: a.date,
+      name: a.name || '',
+      type: a.type || '',
+      isRace: false,
+      planned: false,
+      done: true,
+      status: 'extra',
+      plannedLoad: null,
+      plannedTime: null,
+      realLoad: Math.round(a.foster_load),
+      realTime: fmtTime(a.moving_time),
+    }));
+
+  const sessions = [...plannedSessions, ...extraSessions].sort((a, b) => compareIso(a.date, b.date));
+
+  const totals = {
+    plannedLoad: Math.round(plannedSessions.reduce((s, x) => s + x.plannedLoad, 0)),
+    realLoad: Math.round(sessions.reduce((s, x) => s + (x.realLoad || 0), 0)),
+    plannedCount: plannedSessions.length,
+    doneCount: sessions.filter((x) => x.done).length,
+  };
+
+  return { weekStart, weekEnd, today, sessions, totals };
+}
+
 /** Foster 7 jours "planifié" : prolonge la courbe réelle avec la charge future planifiée. */
 function buildPlanRoll(activities, forecastDaily) {
   const today = todayIso();
@@ -237,13 +322,16 @@ async function buildDashboardData({
   // ------------------------------------------------------------
   let forecast = { forecastDaily: [], totalPlannedDaily: [], raceEvents: [], planRunWeekly: new Map(), planBikeWeekly: new Map(), planRaceWeekly: new Map(), notes: [], debugRaw: [] };
   let forecastError = null;
+  let futureRaw = [];
   try {
     const forecastEnd = addDaysIso(todayIso(), forecastWeeks * 7);
-    const futureRaw = await fetchCalendarEvents(apiKey, historyStart, forecastEnd, athleteId);
+    futureRaw = await fetchCalendarEvents(apiKey, historyStart, forecastEnd, athleteId);
     forecast = buildForecast(futureRaw);
   } catch (e) {
     forecastError = e.message;
   }
+
+  const currentWeekSessions = buildCurrentWeekSessions(futureRaw, df);
 
   // Bornées à pEnd : une semaine affichée ne doit jamais inclure des jours au-delà
   // de la période visible ailleurs (sessions, graphiques), sinon l'ACWR "fuit" des
@@ -432,6 +520,7 @@ async function buildDashboardData({
     bikeChart,
     acwrChart,
     sessionsTable,
+    currentWeekSessions,
     notes: forecast.notes,
     forecastError,
     debugRaw: forecast.debugRaw,

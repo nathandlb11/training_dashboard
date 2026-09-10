@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>Aperçu — Widget Semaine</title>
+<style>
+  body {
+    background: #0b0e14;
+    color: #fff;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 24px;
+    padding: 24px;
+    align-items: flex-start;
+  }
+  .widget {
+    background: #151a24;
+    border-radius: 22px;
+    padding: 12px 14px;
+    box-sizing: border-box;
+  }
+  .widget.small { width: 155px; height: 155px; }
+  .widget.medium { width: 329px; height: 155px; }
+  .widget.large { width: 329px; height: 345px; }
+  .label { font-size: 12px; color: #9aa7c2; margin-bottom: 6px; text-align: center; }
+  .header { display: flex; align-items: center; }
+  .title { font-size: 13px; font-weight: 600; color: #9aa7c2; }
+  .spacer { flex: 1; }
+  .count { font-size: 20px; font-weight: 700; }
+  .count.small { font-size: 16px; }
+  .count.ok { color: #35c46f; }
+  .count.warn { color: #f5a623; }
+  .progress-track {
+    background: #2a3142;
+    border-radius: 4px;
+    height: 6px;
+    width: 100%;
+    margin-top: 6px;
+    overflow: hidden;
+  }
+  .progress-fill {
+    background: #35c46f;
+    height: 100%;
+  }
+  .caption { font-size: 9px; color: #6b7690; margin-top: 3px; }
+  .rows { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
+  .row { display: flex; align-items: center; gap: 6px; font-size: 11px; }
+  .row .day { color: #9aa7c2; font-weight: 500; width: 28px; }
+  .row .icon { font-weight: 700; width: 12px; text-align: center; }
+  .row .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .load { color: #6b7690; }
+  .row.rest .day, .row.rest .rest-label { color: #4a5068; }
+  .row .rest-label { flex: 1; text-align: right; font-size: 10px; }
+  .done { color: #35c46f; }
+  .extra { color: #4a90d9; }
+  .missed { color: #ef5757; }
+  .today { color: #f5a623; }
+  .upcoming { color: #5a6480; }
+  .cols { display: flex; gap: 3px; margin-top: 5px; }
+  .col { flex: 1; display: flex; flex-direction: column; align-items: center; text-align: center; min-width: 0; }
+  .col .daylabel { font-size: 8px; color: #9aa7c2; margin-bottom: 2px; }
+  .col .daylabel.today { color: #f5a623; }
+  .badge { width: 15px; height: 15px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 8px; }
+  .badge.green { background: #35c46f; }
+  .badge.red { background: #ef5757; }
+  .badge.orange { background: #f5a623; }
+  .badge.gray { background: #5a6480; }
+  .col .info { font-size: 7px; color: #8b96b3; margin-top: 3px; white-space: nowrap; }
+  .col .sess + .sess { margin-top: 6px; }
+  .col .restday { font-size: 10px; color: #4a5068; }
+  h1 { font-size: 16px; margin: 0 0 4px; }
+  p.note { color: #9aa7c2; font-size: 12px; max-width: 600px; }
+</style>
+</head>
+<body>
+
+<div style="width:100%">
+  <h1>Aperçu — 3ᵉ widget "Semaine" (séances de la semaine + avancement)</h1>
+  <p class="note">Données factices illustrant les 5 états possibles d'une séance : ✓ réalisée (vert),
+  + hors plan/réalisée en plus (bleu), ✕ manquée (rouge, jour passé sans séance liée),
+  ● aujourd'hui/pas encore faite (orange), ○ à venir (gris). La barre de progression compare la
+  charge Foster déjà réalisée à la charge planifiée totale de la semaine.</p>
+</div>
+
+<div>
+  <div class="label">small</div>
+  <div class="widget small" id="w-small"></div>
+</div>
+<div>
+  <div class="label">medium</div>
+  <div class="widget medium" id="w-medium"></div>
+</div>
+<div>
+  <div class="label">large</div>
+  <div class="widget large" id="w-large"></div>
+</div>
+
+<script>
+// Données factices ~ forme réelle de data.currentWeekSessions (voir src/dashboardData.js)
+const today = "2026-09-10"; // jeudi
+const weekStart = "2026-09-07";
+const sessions = [
+  { date: "2026-09-07", name: "Sortie longue", type: "Run", planned: true, done: true, status: "done", plannedLoad: 320, realLoad: 340, plannedTime: "1h 30min", realTime: "1h 35min" },
+  { date: "2026-09-08", name: "Repos actif", type: "Run", planned: true, done: true, status: "done", plannedLoad: 80, realLoad: 75, plannedTime: "30min", realTime: "28min" },
+  { date: "2026-09-08", name: "Vélo récup", type: "Ride", planned: false, done: true, status: "extra", plannedLoad: null, realLoad: 60, plannedTime: null, realTime: "45min" },
+  { date: "2026-09-09", name: "Renfo", type: "WeightTraining", planned: true, done: true, status: "done", plannedLoad: 90, realLoad: 85, plannedTime: "45min", realTime: "40min" },
+  { date: "2026-09-09", name: "Séance seuil", type: "Run", planned: true, done: false, status: "missed", plannedLoad: 260, realLoad: null, plannedTime: "1h 05min", realTime: null },
+  { date: "2026-09-10", name: "Fractionné côtes", type: "Run", planned: true, done: false, status: "today", plannedLoad: 300, realLoad: null, plannedTime: "1h 10min", realTime: null },
+  { date: "2026-09-11", name: "Sortie facile", type: "Run", planned: true, done: false, status: "upcoming", plannedLoad: 150, realLoad: null, plannedTime: "45min", realTime: null },
+  { date: "2026-09-13", name: "Course — 10 km", type: "Run", planned: true, done: false, status: "upcoming", plannedLoad: 400, realLoad: null, plannedTime: "45min", realTime: null },
+];
+const totals = {
+  plannedLoad: sessions.filter(s => s.planned).reduce((a, s) => a + (s.plannedLoad || 0), 0),
+  realLoad: sessions.reduce((a, s) => a + (s.realLoad || 0), 0),
+  plannedCount: sessions.filter(s => s.planned).length,
+  doneCount: sessions.filter(s => s.done).length,
+};
+
+const DAY_ABBR = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"];
+function dayAbbr(iso) {
+  const d = new Date(iso + "T00:00:00Z");
+  return DAY_ABBR[(d.getUTCDay() + 6) % 7];
+}
+function fmtDay(iso) {
+  const [, m, d] = iso.split("-");
+  return `${d}/${m}`;
+}
+function styleFor(status) {
+  return {
+    done: { icon: "✓", cls: "done" },
+    extra: { icon: "+", cls: "extra" },
+    missed: { icon: "✕", cls: "missed" },
+    today: { icon: "●", cls: "today" },
+    upcoming: { icon: "○", cls: "upcoming" },
+  }[status];
+}
+
+function groupByDay() {
+  const map = new Map();
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(weekStart + "T00:00:00Z");
+    d.setUTCDate(d.getUTCDate() + i);
+    map.set(d.toISOString().slice(0, 10), []);
+  }
+  for (const s of sessions) {
+    if (!map.has(s.date)) map.set(s.date, []);
+    map.get(s.date).push(s);
+  }
+  return [...map.entries()].sort(([a], [b]) => a.localeCompare(b));
+}
+
+function renderHeader(el, family) {
+  const ratio = totals.plannedLoad > 0 ? totals.realLoad / totals.plannedLoad : 0;
+  const header = document.createElement("div");
+  header.className = "header";
+  header.innerHTML = `
+    <div class="title">Semaine</div>
+    <div class="spacer"></div>
+    <div class="count ${family === 'small' ? 'small' : ''} ${ratio >= 1 ? 'ok' : 'warn'}">${totals.doneCount}/${totals.plannedCount}</div>
+  `;
+  el.appendChild(header);
+
+  const track = document.createElement("div");
+  track.className = "progress-track";
+  track.innerHTML = `<div class="progress-fill" style="width:${Math.min(100, ratio * 100)}%"></div>`;
+  el.appendChild(track);
+
+  const caption = document.createElement("div");
+  caption.className = "caption";
+  caption.textContent = `Charge : ${totals.realLoad} / ${totals.plannedLoad}`;
+  el.appendChild(caption);
+}
+
+function renderRow(el, s, showName) {
+  const row = document.createElement("div");
+  row.className = "row";
+  const st = styleFor(s.status);
+  const load = s.done ? s.realLoad : s.plannedLoad;
+  row.innerHTML = `
+    <div class="day">${dayAbbr(s.date)}</div>
+    <div class="icon ${st.cls}">${st.icon}</div>
+    ${showName ? `<div class="name">${s.name}</div>` : `<div class="spacer"></div>`}
+    <div class="load">${load != null ? load : "—"}</div>
+  `;
+  el.appendChild(row);
+}
+
+function renderRest(el, date) {
+  const row = document.createElement("div");
+  row.className = "row rest";
+  row.innerHTML = `
+    <div class="day">${dayAbbr(date)} ${fmtDay(date)}</div>
+    <div class="spacer"></div>
+    <div class="rest-label">repos</div>
+  `;
+  el.appendChild(row);
+}
+
+// vert = réalisée (done/extra), rouge = manquée, orange = aujourd'hui non réalisée, gris = à venir
+function badgeClass(status) {
+  if (status === 'done' || status === 'extra') return 'green';
+  if (status === 'missed') return 'red';
+  if (status === 'today') return 'orange';
+  return 'gray';
+}
+
+// Sport différencié par emoji (même convention que public/js/planning.js SPORT_ICONS/TYPE_MAP).
+const SPORT_TYPE_MAP = { WeightTraining: 'Strength', TrailRun: 'Run', VirtualRide: 'Ride', GravelRide: 'Ride', MountainBikeRide: 'Ride', OpenWaterSwim: 'Swim' };
+const SPORT_ICONS = { Run: '🏃', Ride: '🚴', Swim: '🏊', Strength: '🏋️', Hike: '🥾', Walk: '🚶' };
+function sportIcon(type) {
+  return SPORT_ICONS[SPORT_TYPE_MAP[type] || type] || '🎽';
+}
+
+function shortDuration(t) {
+  if (!t) return '';
+  return t.replace(' ', '').replace('min', "'");
+}
+
+function renderColumns(el, days, today) {
+  const cols = document.createElement("div");
+  cols.className = "cols";
+  days.forEach(([date, list]) => {
+    const col = document.createElement("div");
+    col.className = "col";
+    const label = document.createElement("div");
+    label.className = "daylabel" + (date === today ? " today" : "");
+    label.textContent = dayAbbr(date);
+    col.appendChild(label);
+    if (!list.length) {
+      const rest = document.createElement("div");
+      rest.className = "restday";
+      rest.textContent = "–";
+      col.appendChild(rest);
+    } else {
+      list.forEach((s) => {
+        const sess = document.createElement("div");
+        sess.className = "sess";
+        const time = s.done ? s.realTime : s.plannedTime;
+        const load = s.done ? s.realLoad : s.plannedLoad;
+        const info = [shortDuration(time), load != null ? `${load}` : null].filter(Boolean).join(' · ');
+        sess.innerHTML = `
+          <div class="badge ${badgeClass(s.status)}">${sportIcon(s.type)}</div>
+          <div class="info">${info}</div>
+        `;
+        col.appendChild(sess);
+      });
+    }
+    cols.appendChild(col);
+  });
+  el.appendChild(cols);
+}
+
+// --- small : uniquement aujourd'hui ---
+const wSmall = document.getElementById("w-small");
+renderHeader(wSmall, "small");
+const rowsSmall = document.createElement("div");
+rowsSmall.className = "rows";
+wSmall.appendChild(rowsSmall);
+const todaySessions = sessions.filter(s => s.date === today);
+todaySessions.forEach(s => renderRow(rowsSmall, s, true));
+
+// --- medium : une colonne par jour, une pastille par séance ---
+const wMedium = document.getElementById("w-medium");
+renderHeader(wMedium, "medium");
+const days = groupByDay();
+renderColumns(wMedium, days, today);
+
+// --- large : toute la semaine, avec noms ---
+const wLarge = document.getElementById("w-large");
+renderHeader(wLarge, "large");
+const rowsLarge = document.createElement("div");
+rowsLarge.className = "rows";
+wLarge.appendChild(rowsLarge);
+days.forEach(([date, list]) => {
+  if (!list.length) renderRest(rowsLarge, date);
+  else list.forEach(s => renderRow(rowsLarge, s, true));
+});
+</script>
+</body>
+</html>
