@@ -29,6 +29,11 @@ class TtlCache {
   set(parts, value) {
     this.map.set(this.key(parts), { value, at: Date.now() });
   }
+
+  /** Vide tout le cache — appelé après une écriture pour éviter de resservir des données obsolètes. */
+  clear() {
+    this.map.clear();
+  }
 }
 
 const cache = new TtlCache(5 * 60 * 1000); // 5 minutes, comme le dashboard Streamlit
@@ -109,10 +114,28 @@ async function fetchCalendarEvents(apiKey, oldest, newest, athleteId = '0') {
 /** Upsert d'un lot de séances planifiées dans Intervals.icu. */
 async function createOrUpdateCalendarEvents(apiKey, events, athleteId = '0') {
   if (!events || !events.length) return [];
-  return intervalsApiRequest('POST', `/athlete/${athleteId}/events/bulk`, apiKey, {
+  const result = await intervalsApiRequest('POST', `/athlete/${athleteId}/events/bulk`, apiKey, {
     params: { upsert: 'true' },
     data: events,
   });
+  cache.clear();
+  return result;
+}
+
+/** Met à jour un événement du calendrier existant (par id Intervals.icu) — utilisé pour la modification d'une séance déjà envoyée. */
+async function updateCalendarEvent(apiKey, athleteId, eventId, patch) {
+  const result = await intervalsApiRequest('PUT', `/athlete/${athleteId}/events/${eventId}`, apiKey, {
+    data: patch,
+  });
+  cache.clear();
+  return result;
+}
+
+/** Supprime un événement du calendrier existant (par id Intervals.icu). */
+async function deleteCalendarEvent(apiKey, athleteId, eventId) {
+  const result = await intervalsApiRequest('DELETE', `/athlete/${athleteId}/events/${eventId}`, apiKey);
+  cache.clear();
+  return result;
 }
 
 /** Récupère la bibliothèque de séances enregistrée dans Intervals.icu. */
@@ -133,5 +156,7 @@ module.exports = {
   fetchIntervalsEvents,
   fetchCalendarEvents,
   createOrUpdateCalendarEvents,
+  updateCalendarEvent,
+  deleteCalendarEvent,
   fetchWorkoutLibrary,
 };

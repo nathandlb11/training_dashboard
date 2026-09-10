@@ -374,9 +374,15 @@ async function buildDashboardData({
     const validChronicToToday = loadMetricsToToday.filter((m) => m.chronic_load_4w != null && m.chronic_load_4w > 0);
     currentChronicLoad = validChronicToToday.length ? validChronicToToday.at(-1).chronic_load_4w : null;
   }
-  // Les séances déjà réalisées (activity_id lié) sont déjà exclues de forecastDaily par
-  // buildForecast : on peut donc inclure aujourd'hui sans risquer un double comptage.
-  const futureDaily = forecast.forecastDaily.filter((d) => compareIso(d.date, today) >= 0);
+  // buildForecast n'exclut de forecastDaily que les séances déjà liées via activity_id, mais ce
+  // lien Intervals.icu n'est pas toujours fait (délai de sync, sport différent du prévu, séance
+  // avancée/reculée...). Sans ça, une séance réellement faite un jour >= aujourd'hui reste comptée
+  // en "restant" EN PLUS de sa charge réelle déjà comptabilisée -> restante/projetée surestimées.
+  // Donc on exclut aussi toute date qui a déjà une activité réelle enregistrée, peu importe le lien.
+  const realActivityDates = new Set(df.filter((a) => a.date && a.foster_load > 0).map((a) => a.date));
+  const futureDaily = forecast.forecastDaily.filter(
+    (d) => compareIso(d.date, today) >= 0 && !realActivityDates.has(d.date)
+  );
   const plannedWeeklyMap = groupSum(futureDaily, (d) => weekStartMonday(d.date), (d) => d.foster_load);
   // Charge planifiée totale de la semaine (réalisée ou non), pour comparer en direct le
   // "reste à faire" à ce qui était prévu au départ.

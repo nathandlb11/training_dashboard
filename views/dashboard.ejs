@@ -7,8 +7,13 @@
   <%- include('partials/nav') %>
 
   <main>
-    <h1>Training Load Dashboard</h1>
-    <p class="caption">Intervals.icu API → charge Foster, CAP et vélo</p>
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px;">
+      <div>
+        <h1>Training Load Dashboard</h1>
+        <p class="caption">Intervals.icu API → charge Foster, CAP et vélo</p>
+      </div>
+      <button type="button" class="btn-ghost" id="toggleNotesBtn" style="display:none;">🗒️ Afficher les notes</button>
+    </div>
 
     <% if (apiKeyMissing) { %>
       <div class="alert alert-info">
@@ -53,7 +58,7 @@
   </main>
 
   <script>
-    window.__BOOTSTRAP__ = <%- JSON.stringify({ params, data: bootstrapData }) %>;
+    window.__BOOTSTRAP__ = <%- JSON.stringify({ params, data: bootstrapData, widgetToken: typeof widgetToken !== 'undefined' ? widgetToken : '' }) %>;
   </script>
   <script src="/vendor/format.js"></script>
   <script src="/js/dashboard.js"></script>

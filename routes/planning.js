@@ -1,7 +1,12 @@
 'use strict';
 
 const express = require('express');
-const { createOrUpdateCalendarEvents, fetchWorkoutLibrary } = require('../src/intervalsApi');
+const {
+  createOrUpdateCalendarEvents,
+  updateCalendarEvent,
+  deleteCalendarEvent,
+  fetchWorkoutLibrary,
+} = require('../src/intervalsApi');
 const { getAthleteOptions } = require('../src/athletes');
 const { getChronicLoad, getPlannedCalendar } = require('../src/planningData');
 const { SESSION_LIBRARY } = require('../src/sessionLibrary');
@@ -114,9 +119,39 @@ router.post('/api/planning/send-bulk', express.json(), async (req, res) => {
   if (!apiKey) return res.status(400).json({ error: 'Clé API Intervals.icu manquante.' });
 
   try {
-    const { athleteId = '0', events } = req.body;
+    const { athleteId = '0', events, confirmed } = req.body;
+    if (!confirmed) return res.status(400).json({ error: "Confirmation requise avant l'envoi." });
     if (!events || !events.length) return res.status(400).json({ error: 'Aucune séance à envoyer.' });
     const result = await createOrUpdateCalendarEvents(apiKey, events, athleteId);
+    res.json({ result });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.post('/api/planning/event/:id/update', express.json(), async (req, res) => {
+  const apiKey = getApiKey();
+  if (!apiKey) return res.status(400).json({ error: 'Clé API Intervals.icu manquante.' });
+
+  try {
+    const { athleteId = '0', patch, confirmed } = req.body;
+    if (!confirmed) return res.status(400).json({ error: 'Confirmation requise avant la modification.' });
+    if (!patch) return res.status(400).json({ error: 'Modification manquante.' });
+    const result = await updateCalendarEvent(apiKey, athleteId, req.params.id, patch);
+    res.json({ result });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.post('/api/planning/event/:id/delete', express.json(), async (req, res) => {
+  const apiKey = getApiKey();
+  if (!apiKey) return res.status(400).json({ error: 'Clé API Intervals.icu manquante.' });
+
+  try {
+    const { athleteId = '0', confirmed } = req.body;
+    if (!confirmed) return res.status(400).json({ error: 'Confirmation requise avant la suppression.' });
+    const result = await deleteCalendarEvent(apiKey, athleteId, req.params.id);
     res.json({ result });
   } catch (e) {
     res.status(500).json({ error: e.message });

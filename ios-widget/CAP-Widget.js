@@ -1,9 +1,9 @@
-// Widget iPhone ACWR — à ouvrir/coller dans l'app Scriptable (scriptable.app)
+// Widget iPhone CAP (km / D+ / heures) — à ouvrir/coller dans l'app Scriptable (scriptable.app)
 // Installation :
-//  1. Renseigne BASE_URL, ATHLETE_ID, TOKEN ci-dessous.
-//  2. Colle ce script dans un nouveau script Scriptable, nomme-le "ACWR Widget".
+//  1. Renseigne BASE_URL, ATHLETE_ID, TOKEN ci-dessous (mêmes valeurs que ACWR-Widget.js).
+//  2. Colle ce script dans un nouveau script Scriptable, nomme-le "CAP Widget".
 //  3. Écran d'accueil iPhone -> appui long -> "+" -> Scriptable -> taille petite/moyenne/grande
-//     -> Modifier le widget -> Script = "ACWR Widget".
+//     -> Modifier le widget -> Script = "CAP Widget".
 //
 // Si WIDGET_TOKEN est défini côté serveur (.env), TOKEN doit avoir la même valeur.
 
@@ -20,13 +20,6 @@ async function fetchDashboardData() {
   return data;
 }
 
-function acwrColor(value) {
-  if (value == null) return Color.gray();
-  if (value > 1.3) return Color.red();
-  if (value < 0.8) return Color.orange();
-  return Color.green();
-}
-
 function formatWeekFr(iso) {
   if (!iso) return '';
   const [y, m, d] = iso.split('-');
@@ -34,7 +27,7 @@ function formatWeekFr(iso) {
 }
 
 // ------------------------------------------------------------
-// Helpers de dessin (mêmes couleurs/logique que public/js/dashboard.js renderAcwrChart)
+// Helpers de dessin (mêmes couleurs/logique que public/js/dashboard.js renderCapChart)
 // ------------------------------------------------------------
 function makeXScale(weeks, x0, x1) {
   const n = weeks.length;
@@ -116,9 +109,9 @@ function drawLegend(dc, x0, y, items) {
 }
 
 // ------------------------------------------------------------
-// Dessin du graphique ACWR (barres charge réelle/planifiée + ligne ACWR + zone 1,0-1,3)
+// Dessin du graphique CAP (barres Km + D+ empilées + ligne Heures + Heures planifiées)
 // ------------------------------------------------------------
-function drawAcwrChartImage(chart, size, showLegend) {
+function drawCapChartImage(c, size, showLegend) {
   const dc = new DrawContext();
   dc.size = size;
   dc.opaque = false;
@@ -133,82 +126,64 @@ function drawAcwrChartImage(chart, size, showLegend) {
   const yTop = padT;
   const yBottom = size.height - padB;
 
-  const historyWeeks = chart.weeks.slice(-6);
-  const forecastWeeks = chart.forecast.weeks;
-  const allWeeks = [...new Set([...historyWeeks, ...forecastWeeks])].sort();
+  const historyWeeks = c.weeks.slice(-6);
+  const allWeeks = [...new Set([...historyWeeks, ...(c.plannedWeeks || [])])].sort();
   const xScale = makeXScale(allWeeks, x0, x1);
-
-  // Barres de charge hebdomadaire (arrière-plan, échelle étirée pour rester discrète)
-  const wl = chart.weeklyLoad || { weeks: [], real: [], planned: [] };
-  const loadWeeks = wl.weeks.filter((w) => allWeeks.includes(w));
-  const maxStack = loadWeeks.length
-    ? Math.max(...loadWeeks.map((w) => { const i = wl.weeks.indexOf(w); return (wl.real[i] || 0) + (wl.planned[i] || 0); }))
-    : 0;
-  const loadYScale = makeYScale(0, maxStack > 0 ? maxStack * 3 : 1, yTop, yBottom);
   const barWidth = Math.max(4, ((x1 - x0) / Math.max(1, allWeeks.length)) * 0.5);
 
-  wl.weeks.forEach((w, i) => {
-    if (!allWeeks.includes(w)) return;
+  // Échelle Km / D+ (barres empilées)
+  const maxKmDplus = historyWeeks.length
+    ? Math.max(...historyWeeks.map((w) => { const i = c.weeks.indexOf(w); return (c.km[i] || 0) + (c.dplusScaled[i] || 0); }))
+    : 0;
+  const kmYScale = makeYScale(0, maxKmDplus > 0 ? maxKmDplus * 1.15 : 1, yTop, yBottom);
+
+  historyWeeks.forEach((w) => {
+    const i = c.weeks.indexOf(w);
     const x = xScale(w);
-    const real = wl.real[i] || 0;
-    const planned = wl.planned[i] || 0;
-    const yReal = loadYScale(real);
-    const yTot = loadYScale(real + planned);
-    dc.setFillColor(new Color("#35c46f", 0.55));
-    dc.fillRect(new Rect(x - barWidth / 2, yReal, barWidth, yBottom - yReal));
-    dc.setFillColor(new Color("#f5a623", 0.45));
-    dc.fillRect(new Rect(x - barWidth / 2, yTot, barWidth, yReal - yTot));
+    const km = c.km[i] || 0;
+    const dplus = c.dplusScaled[i] || 0;
+    const yKm = kmYScale(km);
+    const yTot = kmYScale(km + dplus);
+    dc.setFillColor(new Color("#FF6B35", 0.85));
+    dc.fillRect(new Rect(x - barWidth / 2, yKm, barWidth, yBottom - yKm));
+    dc.setFillColor(new Color("#8B4513", 0.85));
+    dc.fillRect(new Rect(x - barWidth / 2, yTot, barWidth, yKm - yTot));
   });
 
-  // Échelle ACWR + zone de référence 1,0 - 1,3
-  const acwrValues = historyWeeks
-    .map((w) => chart.acwr[chart.weeks.indexOf(w)])
-    .concat(chart.forecast.acwr)
-    .filter((v) => v != null);
-  const acwrMin = Math.min(0.5, ...acwrValues, 1.0);
-  const acwrMax = Math.max(1.6, ...acwrValues, 1.3);
-  const acwrYScale = makeYScale(acwrMin, acwrMax, yTop, yBottom);
+  // Échelle Heures (ligne réelle + planifiée)
+  const heuresReal = historyWeeks.map((w) => c.heures[c.weeks.indexOf(w)] || 0);
+  const heuresPlan = c.plannedHeures || [];
+  const maxHeures = Math.max(0.1, ...heuresReal, ...heuresPlan);
+  const heuresYScale = makeYScale(0, maxHeures * 1.15, yTop, yBottom);
 
-  const yBandTop = acwrYScale(1.3);
-  const yBandBottom = acwrYScale(1.0);
-  dc.setFillColor(new Color("#35c46f", 0.12));
-  dc.fillRect(new Rect(x0, yBandTop, x1 - x0, yBandBottom - yBandTop));
-  strokeDashedPolyline(dc, [new Point(x0, yBandTop), new Point(x1, yBandTop)], new Color("#666666"), 1);
-  strokeDashedPolyline(dc, [new Point(x0, yBandBottom), new Point(x1, yBandBottom)], new Color("#666666"), 1);
-
-  // Ligne ACWR historique (pleine) + prévisionnelle (pointillés)
   const histPts = historyWeeks.map((w) => {
-    const v = chart.acwr[chart.weeks.indexOf(w)];
-    return v == null ? null : new Point(xScale(w), acwrYScale(v));
+    const v = c.heures[c.weeks.indexOf(w)];
+    return v == null ? null : new Point(xScale(w), heuresYScale(v));
   }).filter(Boolean);
-  strokePolyline(dc, histPts, new Color("#4a90d9"), 3);
-  histPts.forEach((p) => fillCircle(dc, p, 2.5, new Color("#4a90d9")));
+  strokePolyline(dc, histPts, new Color("#1F77B4"), 3);
+  histPts.forEach((p) => fillCircle(dc, p, 2.5, new Color("#1F77B4")));
 
-  const forePts = forecastWeeks.map((w, i) => {
-    const v = chart.forecast.acwr[i];
-    return v == null ? null : new Point(xScale(w), acwrYScale(v));
+  const planPts = (c.plannedWeeks || []).map((w, i) => {
+    const v = heuresPlan[i];
+    return v == null ? null : new Point(xScale(w), heuresYScale(v));
   }).filter(Boolean);
-  if (forePts.length) {
-    const dashedPts = histPts.length ? [histPts[histPts.length - 1], ...forePts] : forePts;
-    strokeDashedPolyline(dc, dashedPts, new Color("#f5a623"), 2);
-    forePts.forEach((p) => strokeCircle(dc, p, 3.5, new Color("#f5a623"), 2));
+  if (planPts.length) {
+    strokeDashedPolyline(dc, planPts, new Color("#1F77B4"), 2);
+    (c.plannedWeeks || []).forEach((w, i) => {
+      const v = heuresPlan[i];
+      if (v == null) return;
+      const p = new Point(xScale(w), heuresYScale(v));
+      strokeCircle(dc, p, 3.5, new Color("#1F77B4"), 2);
+      // Marque les semaines de course (icône simplifiée : point rouge)
+      if ((c.plannedRaces || [])[i]) fillCircle(dc, p, 2, new Color("#ef5757"));
+    });
   }
-
-  // Courses (marqueurs rouges)
-  (chart.raceMarkers || []).forEach((r) => {
-    const x = xScale(r.week);
-    if (x == null || r.acwr == null) return;
-    const p = new Point(x, acwrYScale(r.acwr));
-    fillCircle(dc, p, 4, new Color("#ef5757"));
-    strokeCircle(dc, p, 4, Color.white(), 1);
-  });
 
   if (showLegend) {
     drawLegend(dc, x0, size.height - 14, [
-      ["#4a90d9", "ACWR"],
-      ["#f5a623", "Prévi."],
-      ["#35c46f", "Réel"],
-      ["#f5a623", "Planifié"],
+      ["#FF6B35", "Km"],
+      ["#8B4513", "D+"],
+      ["#1F77B4", "Heures"],
     ]);
   }
 
@@ -222,32 +197,47 @@ async function createWidget() {
 
   try {
     const data = await fetchDashboardData();
-    const chart = data.acwrChart;
+    const c = data.capChart;
     const family = config.widgetFamily || 'medium';
 
-    const lastAcwr = [...chart.acwr].reverse().find((v) => v != null) ?? null;
+    if (!c.weeks.length) {
+      const empty = w.addText("Aucune activité CAP.");
+      empty.font = Font.systemFont(13);
+      empty.textColor = Color.gray();
+      return w;
+    }
+
+    const lastIdx = c.weeks.length - 1;
+    const lastKm = c.km[lastIdx] || 0;
+    const lastDplus = c.dplus[lastIdx] || 0;
 
     const header = w.addStack();
     header.centerAlignContent();
-    const title = header.addText("ACWR");
+    const title = header.addText("CAP");
     title.font = Font.semiboldSystemFont(13);
     title.textColor = new Color("#9aa7c2");
     header.addSpacer();
-    const big = header.addText(lastAcwr != null ? lastAcwr.toFixed(2) : "—");
+    const numStack = header.addStack();
+    numStack.layoutVertically();
+    const big = numStack.addText(`${lastKm.toFixed(0)} km`);
     big.font = Font.boldSystemFont(family === 'small' ? 20 : 24);
-    big.textColor = acwrColor(lastAcwr);
+    big.textColor = new Color("#FF6B35");
+    big.rightAlignText();
+    const dplusText = numStack.addText(`D+ ${Math.round(lastDplus)} m`);
+    dplusText.font = Font.systemFont(family === 'small' ? 9 : 11);
+    dplusText.textColor = new Color("#c98a5a");
+    dplusText.rightAlignText();
 
     w.addSpacer(4);
 
     const showLegend = family !== 'small';
     const size = family === 'large' ? new Size(300, 210) : family === 'small' ? new Size(150, 95) : new Size(300, 95);
-    const img = drawAcwrChartImage(chart, size, showLegend);
+    const img = drawCapChartImage(c, size, showLegend);
     const imgWidget = w.addImage(img);
     imgWidget.imageSize = size;
 
     w.addSpacer(2);
-    const lastWeek = chart.weeks[chart.weeks.length - 1];
-    const caption = w.addText(`Semaine du ${formatWeekFr(lastWeek)}`);
+    const caption = w.addText(`Semaine du ${formatWeekFr(c.weeks[lastIdx])}`);
     caption.font = Font.systemFont(9);
     caption.textColor = new Color("#6b7690");
   } catch (e) {
@@ -266,4 +256,3 @@ if (config.runsInWidget) {
   await widget.presentMedium();
 }
 Script.complete();
-

@@ -461,6 +461,10 @@ hr.sep { border: none; border-top: 1px solid var(--border); margin: 28px 0; }
 .mcal-header { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; margin-bottom: 4px; }
 .mcal-dayname { text-align: center; font-size: 0.7rem; font-weight: 700; text-transform: uppercase; color: var(--text-dim); padding: 4px 0; }
 
+.mcal-week-block { margin-bottom: 10px; }
+.mcal-week-actions { padding: 8px 10px; background: var(--panel); border: 1px solid var(--border); border-bottom: none; border-radius: 8px 8px 0 0; transition: border-color 0.3s, box-shadow 0.3s; }
+.mcal-week-actions.flash { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(255,107,53,0.3); }
+.mcal-week-actions + .mcal-week { margin-top: 0; border: 1px solid var(--border); border-top: none; border-radius: 0 0 8px 8px; padding: 4px; }
 .mcal-week { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; margin-bottom: 4px; }
 
 .mcal-day {
@@ -498,6 +502,11 @@ hr.sep { border: none; border-top: 1px solid var(--border); margin: 28px 0; }
 }
 .session-chip.pending { border-color: rgba(255,107,53,0.5); background: rgba(255,107,53,0.08); cursor: pointer; }
 .session-chip.pending:hover { background: rgba(255,107,53,0.15); }
+.session-chip.real { cursor: pointer; }
+.session-chip.real:hover { background: rgba(74,144,217,0.1); }
+.session-chip.real[draggable="true"] { cursor: grab; user-select: none; -webkit-user-drag: element; }
+.session-chip.edited { border-color: rgba(74,144,217,0.6); background: rgba(74,144,217,0.12); }
+.session-chip.to-delete { opacity: 0.5; text-decoration: line-through; }
 .chip-dur { color: var(--text-dim); font-size: 0.68rem; }
 .chip-load { color: var(--accent-2); font-size: 0.68rem; margin-left: auto; }
 .chip-remove {
@@ -507,14 +516,6 @@ hr.sep { border: none; border-top: 1px solid var(--border); margin: 28px 0; }
 .chip-remove:hover { color: var(--red); }
 
 /* ── Aide planif : cycle ─────────────────────────────────────── */
-.cycle-note-row {
-  display: flex;
-  align-items: flex-end;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin-top: 12px;
-}
-
 .cycle-weeks { display: flex; flex-direction: column; gap: 14px; margin-bottom: 20px; }
 .cycle-week-card {
   background: var(--panel);
@@ -583,8 +584,8 @@ hr.sep { border: none; border-top: 1px solid var(--border); margin: 28px 0; }
 .plan-add-session:hover { border-color: var(--accent); color: var(--accent); }
 
 /* ── Glisser-déposer des séances ──────────────────────────────── */
-.session-chip.pending[draggable="true"] { cursor: grab; }
-.session-chip.pending.dragging { opacity: 0.4; }
+.session-chip.pending[draggable="true"] { cursor: grab; user-select: none; -webkit-user-drag: element; }
+.session-chip.dragging { opacity: 0.4; }
 .plan-day.drag-over,
 .mcal-day.drag-over { border-color: var(--accent); background: rgba(255,107,53,0.12); }
 .plan-day.past { opacity: 0.6; }
@@ -690,3 +691,8 @@ hr.sep { border: none; border-top: 1px solid var(--border); margin: 28px 0; }
   padding: 2px; font-size: 0.82rem; cursor: pointer; margin-top: 3px;
 }
 .tpl-add-session:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ── Confirmation d'envoi ─────────────────────────────────────── */
+.confirm-send-summary ul { margin: 4px 0 0; padding-left: 18px; font-size: 0.82rem; color: var(--text-dim); max-height: 160px; overflow-y: auto; }
+.confirm-send-summary p { margin: 10px 0 0; font-size: 0.85rem; }
+.confirm-send-summary p:first-child { margin-top: 0; }

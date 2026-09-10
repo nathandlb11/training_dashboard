@@ -5,6 +5,7 @@
   const boot = window.__BOOTSTRAP__ || { params: {}, data: null };
   const charts = {}; // registre des instances Chart.js pour destroy/recreate
   let showNotes = false;
+  let notesCount = 0;
 
   const els = {
     athlete: document.getElementById('athleteSelect'),
@@ -13,9 +14,18 @@
     forecastWeeksOut: document.getElementById('forecastWeeksOut'),
     typesFilter: document.getElementById('typesFilter'),
     content: document.getElementById('dashboard-content'),
+    toggleNotesBtn: document.getElementById('toggleNotesBtn'),
   };
 
   if (!els.content) return; // page en erreur / clé API manquante
+
+  if (els.toggleNotesBtn) {
+    els.toggleNotesBtn.addEventListener('click', () => {
+      showNotes = !showNotes;
+      els.toggleNotesBtn.textContent = `${showNotes ? '🗒️ Masquer les notes' : '🗒️ Afficher les notes'} (${notesCount})`;
+      Object.values(charts).forEach((c) => c.update('none'));
+    });
+  }
 
   const SPORT_COLORS = ['#ff6b35', '#4a90d9', '#7b2d8e', '#35c46f', '#f5a623', '#e94f8a', '#3fbac2', '#c2c23f'];
 
@@ -92,12 +102,14 @@
 
   function currentParams() {
     const checked = [...els.typesFilter.querySelectorAll('input[type=checkbox]:checked')].map((c) => c.value);
-    return {
+    const params = {
       athleteId: els.athlete.value,
       historyStart: els.historyStart.value,
       forecastWeeks: els.forecastWeeks.value,
       types: checked.join(','),
     };
+    if (boot.widgetToken) params.token = boot.widgetToken;
+    return params;
   }
 
   function buildTypeFilter(meta) {
@@ -664,12 +676,6 @@
       </details>
 
       <h2 class="subheader">Charge Foster — répartition par sport</h2>
-      ${data.notes && data.notes.length ? `<div class="card" style="padding:8px 16px;margin-bottom:0">
-        <label style="cursor:pointer;font-size:0.85rem;color:#9aa7c2;display:flex;align-items:center;gap:8px">
-          <input type="checkbox" id="toggle-notes" ${showNotes ? 'checked' : ''} />
-          Afficher les cycles / périodes (${data.notes.length} notes Intervals)
-        </label>
-      </div>` : ''}  
       <div class="card">
         <div class="chart-wrap"><canvas id="chart-sport-foster"></canvas></div>
         <p class="caption" id="sport-foster-caption"></p>
@@ -701,12 +707,11 @@
     renderBikeChart(data);
     renderAcwrChart(data);
 
-    const toggleEl = document.getElementById('toggle-notes');
-    if (toggleEl) {
-      toggleEl.addEventListener('change', () => {
-        showNotes = toggleEl.checked;
-        Object.values(charts).forEach((c) => c.update('none'));
-      });
+    if (els.toggleNotesBtn) {
+      notesCount = data.notes ? data.notes.length : 0;
+      els.toggleNotesBtn.style.display = notesCount ? '' : 'none';
+      if (!notesCount) showNotes = false;
+      els.toggleNotesBtn.textContent = `${showNotes ? '🗒️ Masquer les notes' : '🗒️ Afficher les notes'} (${notesCount})`;
     }
   }
 

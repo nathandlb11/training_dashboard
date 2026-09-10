@@ -11,7 +11,7 @@
   });
 
   const { SESSION_LIBRARY, buildSessionDescription } = SessionLibrary;
-  const { fmtMinutes } = Format;
+  const { fmtMinutes, parseDescriptionDurationMinutes } = Format;
   const { buildTrainingPlan } = PlanBuilder;
 
   // ── Helpers ────────────────────────────────────────────────────
@@ -104,19 +104,19 @@
   let searchQuery = '';
   let pmcChart = null;
   let editingPendingId = null;
+  let editingRealId = null;
+  let pendingEdits = {}; // eventId (string) -> { date, name, type, description, moving_time, rpe, qualityKind, qualityParams }
+  let pendingDeletes = new Set(); // Set<eventId (string)>
   let weekPlanState = {}; // weekIso -> { planningType, nRun, nBike, nStrength }
-  let cycleNotes;
-  try {
-    cycleNotes = JSON.parse(localStorage.getItem('cycleNotes')) || [];
-  } catch (_) {
-    cycleNotes = [];
-  }
-  const saveCycleNotes = () => localStorage.setItem('cycleNotes', JSON.stringify(cycleNotes));
 
   const monthKey = (y, m) => `${y}-${String(m).padStart(2, '0')}`;
 
   if (boot.calendar && boot.calendar.length) {
-    calendarCache[monthKey(currentYear, currentMonth)] = boot.calendar;
+    // boot.calendar vient d'une fenêtre glissante de 28 jours côté serveur (pas alignée sur le mois) :
+    // ne garder que les dates du mois courant, sinon un mois voisin ensuite chargé séparément
+    // (ex. pour l'horizon du graphique) ferait apparaitre ses séances en double dans allRealSessionsInCache.
+    const monthStr = String(currentMonth).padStart(2, '0');
+    calendarCache[monthKey(currentYear, currentMonth)] = boot.calendar.filter((s) => s.date && s.date.slice(5, 7) === monthStr && s.date.slice(0, 4) === String(currentYear));
   }
 
   function getMonthWeeks(year, month) {
@@ -143,37 +143,24 @@
     pendingCount: $('pendingCount'),
     clearPendingBtn: $('clearPendingBtn'),
     sendPendingBtn: $('sendPendingBtn'),
-    viewCalendar: $('viewCalendar'),
-    viewAidePlanif: $('viewAidePlanif'),
     prevMonth: $('prevMonth'),
     nextMonth: $('nextMonth'),
     todayBtn: $('todayBtn'),
     monthLabel: $('monthLabel'),
     monthGrid: $('monthGrid'),
     nWeeks: $('nWeeks'),
-    generateBtn: $('generateBtn'),
     cycleSummary: $('cycleSummary'),
-    cycleRangeLabel: $('cycleRangeLabel'),
-    cycleNoteInput: $('cycleNoteInput'),
-    cycleNoteDisplay: $('cycleNoteDisplay'),
-    saveCycleNoteBtn: $('saveCycleNoteBtn'),
-    cycleWeeksContainer: $('cycleWeeksContainer'),
     weekTemplatesContainer: $('weekTemplatesContainer'),
+    openTemplatesBtn: $('openTemplatesBtn'),
+    templatesModal: $('templatesModal'),
+    templatesClose: $('templatesClose'),
     sendResult: $('sendResult'),
     editModal: $('editModal'),
     editName: $('editName'),
-    editDate: $('editDate'),
-    editType: $('editType'),
-    editQualityKind: $('editQualityKind'),
-    editIntervalsFields: $('editIntervalsFields'),
-    editReps: $('editReps'),
-    editWorkDuration: $('editWorkDuration'),
-    editWorkLow: $('editWorkLow'),
-    editWorkHigh: $('editWorkHigh'),
-    editRecDuration: $('editRecDuration'),
-    editDuration: $('editDuration'),
     editRpe: $('editRpe'),
     editDescription: $('editDescription'),
+    editComputedInfo: $('editComputedInfo'),
+    editRealNotice: $('editRealNotice'),
     editSave: $('editSave'),
     editCancel: $('editCancel'),
     aiPlanModal: $('aiPlanModal'),
@@ -182,11 +169,11 @@
     aiPlanComment: $('aiPlanComment'),
     aiPlanCancel: $('aiPlanCancel'),
     aiPlanGenerate: $('aiPlanGenerate'),
+    confirmSendModal: $('confirmSendModal'),
+    confirmSendSummary: $('confirmSendSummary'),
+    confirmSendCancel: $('confirmSendCancel'),
+    confirmSendOk: $('confirmSendOk'),
   };
-
-  function aideVisible() {
-    return el.viewAidePlanif && el.viewAidePlanif.style.display !== 'none';
-  }
 
   // ── Library ────────────────────────────────────────────────────
   function renderLibrary() {
@@ -211,7 +198,7 @@
   function workoutCardHtml(s) {
     const dur = s.moving_time ? fmtMinutes(Math.round(s.moving_time / 60)) : '';
     const isSel = selectedSession && selectedSession.id === s.id;
-    return `<div class="workout-card${isSel ? ' selected' : ''}" data-id="${escHtml(s.id)}">
+    return `<div class="workout-card${isSel ? ' selected' : ''}" data-id="${escHtml(s.id)}" title="Cliquer pour sélectionner, puis cliquer un jour du calendrier">
       <div class="workout-card-header">
         <span class="workout-icon">${sportIcon(s.type)}</span>
         <span class="workout-name">${escHtml(s.name)}</span>
@@ -278,7 +265,7 @@
     } catch (_) {
       chronicData = null;
     }
-    if (el.viewAidePlanif && el.viewAidePlanif.style.display !== 'none') renderAidePlanif();
+    renderLoadChart();
   }
 
   // ── Month calendar ────────────────────────────────────────────
@@ -297,12 +284,59 @@
     } catch (_) {
       calendarCache[mk] = [];
     }
-    renderMonthCalendar();
+    // Le graphique dépend aussi du cache calendrier (charge déjà planifiée sur les semaines futures) :
+    // le rafraîchir ici, pas seulement la grille, sinon il resterait figé sur les données du chargement initial.
+    refreshAll();
+  }
+
+  function dayCellHtml(date, inMonth, todayStr, canAdd) {
+    const isToday = date === todayStr;
+    const isPast = date < todayStr;
+    const daySessions = realSessionsForDate(date);
+    const dayPending = pendingSessions.filter((p) => p.date === date);
+    const mk = monthKey(...date.split('-').slice(0, 2).map(Number));
+    const loading = calendarCache[mk] === null;
+
+    return `<div class="mcal-day${inMonth ? '' : ' outside'}${isToday ? ' today' : ''}${isPast ? ' past' : ''}${canAdd && inMonth ? ' droppable' : ''}" data-date="${date}">
+      <div class="mcal-day-num${isToday ? ' today-badge' : ''}">${parseInt(date.slice(8), 10)}</div>
+      <div class="mcal-sessions">
+        ${loading && inMonth ? '<div class="chip-loading">…</div>' : ''}
+        ${daySessions.map((s) => sessionChipHtml(s, 'real')).join('')}
+        ${dayPending.map((s) => sessionChipHtml(s, 'pending')).join('')}
+        ${!isPast && inMonth ? `<button class="plan-add-session" data-date="${date}">+ Séance</button>` : ''}
+      </div>
+    </div>`;
+  }
+
+  /** Barre d'actions au-dessus d'une semaine du calendrier (charge/ACWR prévu + préremplir/IA), affichée pour la semaine en cours et les semaines futures. */
+  function weekActionsHtml(week) {
+    const state = getWeekState(week);
+    const metrics = weekMetrics(week);
+    const acwrText = metrics.acwr == null ? 'n/a' : metrics.acwr.toFixed(2);
+    const isCurrent = week === currentWeekIso();
+    return `<div class="mcal-week-actions cycle-week-header" data-week="${week}">
+      <div>
+        <strong>Semaine du ${fmtDateFR(week)}${isCurrent ? ' (en cours)' : ''}</strong>
+        <span class="caption">${Math.round(metrics.weeklyLoad)} Foster · ACWR ${acwrText}</span>
+      </div>
+      <div class="cycle-week-controls">
+        <select class="cw-plan-type" data-week="${week}" title="Type de semaine">
+          <option value="Charge"${state.planningType === 'Charge' ? ' selected' : ''}>Charge</option>
+          <option value="Récupération"${state.planningType === 'Récupération' ? ' selected' : ''}>Récup</option>
+          <option value="Choc"${state.planningType === 'Choc' ? ' selected' : ''}>Choc</option>
+        </select>
+        <input type="number" class="cw-run" data-week="${week}" min="0" max="8" value="${state.nRun}" title="Séances CAP" />
+        <input type="number" class="cw-bike" data-week="${week}" min="0" max="8" value="${state.nBike}" title="Séances vélo" />
+        <input type="number" class="cw-strength" data-week="${week}" min="0" max="6" value="${state.nStrength}" title="Séances renfo" />
+        <button class="cw-prefill btn-sm" data-week="${week}">Préremplir</button>
+        <button class="cw-ai-prefill btn-sm" data-week="${week}" title="Proposer une semaine via IA (Claude)">✨ IA</button>
+      </div>
+    </div>`;
   }
 
   function renderMonthCalendar() {
     const mk = monthKey(currentYear, currentMonth);
-    const sessions = calendarCache[mk]; // null = loading
+    if (calendarCache[mk] === undefined) fetchCalendarMonth(currentYear, currentMonth);
     const todayStr = todayIso();
     const monthStr = String(currentMonth).padStart(2, '0');
     const canAdd = !!selectedSession;
@@ -313,70 +347,120 @@
     let html = `<div class="mcal-header">${DAYS_FR.map((d) => `<div class="mcal-dayname">${d}</div>`).join('')}</div>`;
 
     for (const monIso of weeks) {
-      html += '<div class="mcal-week">';
-      for (let i = 0; i < 7; i++) {
-        const date = addDaysIso(monIso, i);
-        const inMonth = date.slice(5, 7) === monthStr;
-        const isToday = date === todayStr;
-        const isPast = date < todayStr;
-        const daySessions = sessions ? sessions.filter((s) => s.date === date) : [];
-        const dayPending = pendingSessions.filter((p) => p.date === date);
-
-        html += `<div class="mcal-day${inMonth ? '' : ' outside'}${isToday ? ' today' : ''}${isPast ? ' past' : ''}${canAdd && inMonth ? ' droppable' : ''}" data-date="${date}">
-          <div class="mcal-day-num${isToday ? ' today-badge' : ''}">${parseInt(date.slice(8), 10)}</div>
-          <div class="mcal-sessions">
-            ${sessions === null && inMonth ? '<div class="chip-loading">…</div>' : ''}
-            ${daySessions.map((s) => sessionChipHtml(s, false)).join('')}
-            ${dayPending.map((s) => sessionChipHtml(s, true)).join('')}
-          </div>
-        </div>`;
+      const weekEnd = addDaysIso(monIso, 6);
+      const daysHtml = Array.from({ length: 7 }, (_, i) => dayCellHtml(addDaysIso(monIso, i), addDaysIso(monIso, i).slice(5, 7) === monthStr, todayStr, canAdd)).join('');
+      if (weekEnd >= todayStr) {
+        html += `<div class="mcal-week-block">${weekActionsHtml(monIso)}<div class="mcal-week">${daysHtml}</div></div>`;
+      } else {
+        html += `<div class="mcal-week">${daysHtml}</div>`;
       }
-      html += '</div>';
     }
 
     el.monthGrid.innerHTML = html;
   }
 
-  function sessionChipHtml(s, isPending) {
+  /** Charge Foster = RPE × durée, comme pour les séances en attente. icu_training_load (autre métrique Intervals.icu, pas Foster) n'est utilisé qu'en dernier recours si l'événement n'a pas de RPE. */
+  function realSessionLoad(s, durMin) {
+    if (s.rpe && durMin) return Math.round(s.rpe * durMin);
+    return Number.isFinite(s.trainingLoad) ? Math.round(s.trainingLoad) : null;
+  }
+
+  function sessionChipHtml(s, mode) {
     const icon = sportIcon(s.type || s.sport || '');
     const name = escHtml(s.name || s.seance || '');
-    const dur = s.moving_time ? fmtMinutes(Math.round(s.moving_time / 60)) : s.temps || '';
-    if (isPending) {
+    const durMin = s.moving_time ? Math.round(s.moving_time / 60) : (s.movingTime ? Math.round(s.movingTime / 60) : null);
+    const dur = durMin ? fmtMinutes(durMin) : (s.temps || '');
+    if (mode === 'pending') {
+      const load = Math.round(pendingLoad(s));
       return `<div class="session-chip pending" draggable="true" data-pending-id="${escHtml(s.id)}" title="Glisser pour déplacer · cliquer pour modifier">
         <span>${icon} ${name}</span>
         ${s.qualityKind ? `<span class="chip-quality">${escHtml(s.qualityKind)}</span>` : ''}
         ${dur ? `<span class="chip-dur">${dur}</span>` : ''}
+        <span class="chip-load">${load}</span>
         <button class="chip-remove" title="Supprimer">✕</button>
       </div>`;
     }
-    return `<div class="session-chip">
+    const load = realSessionLoad(s, durMin);
+    const cls = `session-chip real${s.edited ? ' edited' : ''}${s.toDelete ? ' to-delete' : ''}`;
+    const draggable = !s.toDelete;
+    return `<div class="${cls}" draggable="${draggable}" data-event-id="${escHtml(s.id)}" title="Glisser pour déplacer · cliquer pour modifier · ✕ pour ${s.toDelete ? 'annuler la suppression' : 'supprimer'} (confirmation demandée avant envoi)">
       <span>${icon} ${name}</span>
       ${dur ? `<span class="chip-dur">${dur}</span>` : ''}
-      ${s.trainingLoad ? `<span class="chip-load">${s.trainingLoad}</span>` : ''}
+      ${load != null ? `<span class="chip-load">${load}</span>` : ''}
+      <button class="chip-remove" title="${s.toDelete ? 'Annuler la suppression' : 'Supprimer'}">${s.toDelete ? '↺' : '✕'}</button>
     </div>`;
+  }
+
+  /** Toutes les séances réelles (Intervals.icu) actuellement en cache, tous mois confondus, dédupliquées par id (au cas où deux mois en cache se chevaucheraient). */
+  function allRealSessionsInCache() {
+    const byId = new Map();
+    const withoutId = [];
+    for (const s of Object.values(calendarCache).filter(Array.isArray).flat()) {
+      if (s.id == null) { withoutId.push(s); continue; }
+      if (!byId.has(s.id)) byId.set(s.id, s);
+    }
+    return [...byId.values(), ...withoutId];
+  }
+
+  /** Séances réelles pour une date, en appliquant les modifications/suppressions en attente (non encore envoyées). */
+  function realSessionsForDate(date) {
+    return allRealSessionsInCache()
+      .map((s) => {
+        if (s.id == null) return s;
+        const key = String(s.id);
+        if (pendingDeletes.has(key)) return { ...s, toDelete: true };
+        const edit = pendingEdits[key];
+        return edit ? { ...s, ...edit, trainingLoad: null, edited: true } : s;
+      })
+      .filter((s) => s.date === date);
   }
 
   function movePendingSession(id, date) {
     const p = pendingSessions.find((s) => s.id === id);
     if (!p || !date || p.date === date) return;
     p.date = date;
-    updatePendingBanner();
-    renderMonthCalendar();
-    if (aideVisible()) renderAidePlanif();
+    refreshAll();
   }
 
-  /** Câble le glisser-déposer des séances en attente vers les cellules de jour d'un conteneur. */
+  /** Déplace une séance déjà envoyée sur Intervals.icu vers une autre date : reste en attente jusqu'à confirmation de l'envoi. */
+  function moveRealSession(id, date) {
+    const key = String(id);
+    if (pendingDeletes.has(key)) return;
+    const original = findRealSessionById(key);
+    if (!original) return;
+    const current = pendingEdits[key] || {
+      name: original.name,
+      type: original.type,
+      rpe: original.rpe,
+      description: original.description,
+      moving_time: original.moving_time || original.movingTime || 0,
+      date: original.date,
+    };
+    if (current.date === date) return;
+    pendingEdits[key] = { ...current, date };
+    refreshAll();
+  }
+
+  /** Câble le glisser-déposer entre jours (séances en attente et séances déjà sur Intervals.icu) vers les cellules de jour d'un conteneur. */
   function wireDragAndDrop(container, daySelector) {
     if (!container) return;
     container.addEventListener('dragstart', (e) => {
-      const chip = e.target.closest('.session-chip.pending');
-      if (!chip) return;
-      e.dataTransfer.setData('text/plain', chip.dataset.pendingId);
-      e.dataTransfer.effectAllowed = 'move';
-      chip.classList.add('dragging');
+      const pendingChip = e.target.closest('.session-chip.pending');
+      if (pendingChip) {
+        e.dataTransfer.setData('text/plain', `pending:${pendingChip.dataset.pendingId}`);
+        e.dataTransfer.effectAllowed = 'move';
+        pendingChip.classList.add('dragging');
+        return;
+      }
+      const realChip = e.target.closest('.session-chip.real[draggable="true"]');
+      if (realChip && realChip.dataset.eventId) {
+        e.dataTransfer.setData('text/plain', `real:${realChip.dataset.eventId}`);
+        e.dataTransfer.effectAllowed = 'move';
+        realChip.classList.add('dragging');
+      }
     });
     container.addEventListener('dragend', (e) => {
-      const chip = e.target.closest('.session-chip.pending');
+      const chip = e.target.closest('.session-chip');
       if (chip) chip.classList.remove('dragging');
     });
     container.addEventListener('dragover', (e) => {
@@ -392,55 +476,43 @@
     });
     container.addEventListener('drop', (e) => {
       const cell = e.target.closest(daySelector);
-      if (!cell) return;
+      if (!cell || !cell.dataset.date) return;
       e.preventDefault();
       cell.classList.remove('drag-over');
-      const id = e.dataTransfer.getData('text/plain');
-      if (id && cell.dataset.date) movePendingSession(id, cell.dataset.date);
+      const raw = e.dataTransfer.getData('text/plain');
+      if (!raw) return;
+      if (raw.startsWith('pending:')) {
+        movePendingSession(raw.slice('pending:'.length), cell.dataset.date);
+      } else if (raw.startsWith('real:')) {
+        moveRealSession(raw.slice('real:'.length), cell.dataset.date);
+      }
     });
   }
 
-  function addPendingSession(date) {
-    if (!selectedSession) return;
+  function addPendingSession(date, session) {
+    const src = session || selectedSession;
+    if (!src) return;
     const id = `pending-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     pendingSessions.push({
       id,
       date,
-      name: selectedSession.name,
-      type: selectedSession.type,
-      description: selectedSession.description || '',
-      moving_time: selectedSession.moving_time || 0,
-      rpe: selectedSession.rpe || 3,
+      name: src.name,
+      type: src.type,
+      description: src.description || '',
+      moving_time: src.moving_time || 0,
+      rpe: src.rpe || 3,
     });
-    updatePendingBanner();
-    renderMonthCalendar();
-    if (el.viewAidePlanif && el.viewAidePlanif.style.display !== 'none') renderAidePlanif();
+    refreshAll();
   }
 
   function addManualPlanSession(date) {
     const id = `pending-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    pendingSessions.push({ id, date, name: 'Séance libre', type: 'Run', description: '', moving_time: 45 * 60, rpe: 3 });
-    updatePendingBanner();
-    renderMonthCalendar();
-    renderAidePlanif();
+    pendingSessions.push({ id, date, name: 'Séance libre', type: 'Run', description: '- Séance libre 45m', moving_time: 45 * 60, rpe: 3 });
+    refreshAll();
     openEditModal(id);
   }
 
-  function updatePendingBanner() {
-    if (pendingSessions.length === 0) {
-      el.pendingBanner.style.display = 'none';
-    } else {
-      el.pendingBanner.style.display = 'flex';
-      el.pendingCount.textContent = `${pendingSessions.length} séance${pendingSessions.length > 1 ? 's' : ''} en attente d'envoi`;
-    }
-  }
-
-  // ── Séances qualité (intervalles paramétrables) ────────────────
-  function qualityOptionsForType(type) {
-    const lib = SESSION_LIBRARY[type] || {};
-    return Object.entries(lib).filter(([, t]) => t.structure === 'warmup_reps_cooldown').map(([name]) => name);
-  }
-
+  // ── Séances qualité (intervalles paramétrables, utilisées par le préremplissage automatique) ──
   /** Applique un template d'intervalles (bibliothèque) à une séance : régénère description/durée/RPE. */
   function applyQualityTemplate(p, type, kind) {
     const template = SESSION_LIBRARY[type] && SESSION_LIBRARY[type][kind];
@@ -448,13 +520,6 @@
     const { description, durationMin } = buildSessionDescription(template);
     p.type = type;
     p.qualityKind = kind;
-    p.qualityParams = {
-      reps: template.reps, work_duration: template.work_duration, work_low: template.work_low, work_high: template.work_high,
-      rec_duration: template.rec_duration, rec_low: template.rec_low, rec_high: template.rec_high,
-      warmup_duration: template.warmup_duration, warmup_low: template.warmup_low, warmup_high: template.warmup_high,
-      cooldown_duration: template.cooldown_duration, cooldown_low: template.cooldown_low, cooldown_high: template.cooldown_high,
-      zone_unit: template.zone_unit,
-    };
     p.description = description;
     p.moving_time = Math.round(durationMin * 60);
     p.rpe = template.rpe || p.rpe || 5;
@@ -462,87 +527,110 @@
     return true;
   }
 
-  function populateQualityKindOptions(type, selected) {
-    const opts = qualityOptionsForType(type);
-    el.editQualityKind.innerHTML = '<option value="">— Aucune (séance simple/manuelle) —</option>' +
-      opts.map((name) => `<option value="${escHtml(name)}"${name === selected ? ' selected' : ''}>${escHtml(name)}</option>`).join('');
+  // ── Édition d'une séance : titre / RPE / description uniquement — la durée (et donc la charge
+  // Foster) est toujours dérivée automatiquement de la description, seule source de vérité. ──
+  /** Affiche en direct la durée/charge estimées à partir de la description + RPE saisis. */
+  function updateEditComputedInfo() {
+    const minutes = parseDescriptionDurationMinutes(el.editDescription.value);
+    const rpe = Math.min(10, Math.max(1, parseInt(el.editRpe.value) || 3));
+    el.editComputedInfo.textContent = minutes > 0
+      ? `Durée estimée : ${fmtMinutes(minutes)} · Charge Foster : ${Math.round(minutes * rpe)}`
+      : '⚠ Aucune durée reconnue dans la description — la durée précédente sera conservée.';
   }
 
-  function fillIntervalFieldsFromParams(params) {
-    const p = params || {};
-    el.editReps.value = p.reps ?? 3;
-    el.editWorkDuration.value = p.work_duration ?? 8;
-    el.editWorkLow.value = p.work_low ?? 90;
-    el.editWorkHigh.value = p.work_high ?? 100;
-    el.editRecDuration.value = p.rec_duration ?? 2;
+  function fillEditForm(p) {
+    el.editName.value = p.name;
+    el.editRpe.value = p.rpe || 3;
+    el.editDescription.value = p.description || '';
+    updateEditComputedInfo();
   }
 
-  function currentIntervalOverrides() {
-    return {
-      reps: Math.max(1, parseInt(el.editReps.value) || 1),
-      work_duration: Math.max(0.25, parseFloat(el.editWorkDuration.value) || 0.25),
-      work_low: parseFloat(el.editWorkLow.value) || 0,
-      work_high: parseFloat(el.editWorkHigh.value) || 0,
-      rec_duration: Math.max(0, parseFloat(el.editRecDuration.value) || 0),
-    };
-  }
-
-  /** Recalcule description/durée/RPE à partir du template + des champs d'intervalles édités. */
-  function refreshQualityPreview() {
-    const kind = el.editQualityKind.value;
-    el.editIntervalsFields.style.display = kind ? 'grid' : 'none';
-    if (!kind) return;
-    const template = SESSION_LIBRARY[el.editType.value] && SESSION_LIBRARY[el.editType.value][kind];
-    if (!template) return;
-    const merged = { ...template, ...currentIntervalOverrides() };
-    const { description, durationMin } = buildSessionDescription(merged);
-    el.editDescription.value = description;
-    el.editDuration.value = Math.round(durationMin);
-    el.editRpe.value = template.rpe || el.editRpe.value;
-  }
-
-  // ── Edit modal (pending session) ──────────────────────────────
   function openEditModal(pendingId) {
     const p = pendingSessions.find((s) => s.id === pendingId);
     if (!p) return;
     editingPendingId = pendingId;
-    el.editName.value = p.name;
-    el.editDate.value = p.date;
-    el.editType.value = p.type;
-    populateQualityKindOptions(p.type, p.qualityKind);
-    fillIntervalFieldsFromParams(p.qualityParams);
-    el.editIntervalsFields.style.display = p.qualityKind ? 'grid' : 'none';
-    el.editDuration.value = Math.round((p.moving_time || 0) / 60);
-    el.editRpe.value = p.rpe || 3;
-    el.editDescription.value = p.description || '';
+    editingRealId = null;
+    fillEditForm(p);
+    el.editRealNotice.style.display = 'none';
+    el.editModal.style.display = 'flex';
+  }
+
+  /** Ouvre l'éditeur pour une séance déjà présente sur Intervals.icu : la modification reste en attente jusqu'à confirmation de l'envoi. */
+  function openEditModalForReal(id) {
+    const original = findRealSessionById(id);
+    if (!original) return;
+    editingRealId = String(id);
+    editingPendingId = null;
+    const staged = pendingEdits[editingRealId];
+    const base = {
+      name: original.name,
+      date: original.date,
+      type: original.type || 'Run',
+      moving_time: original.moving_time || original.movingTime || 0,
+      rpe: original.rpe || 3,
+      description: original.description || '',
+    };
+    fillEditForm(staged || base);
+    el.editRealNotice.style.display = 'block';
     el.editModal.style.display = 'flex';
   }
 
   function closeEditModal() {
     editingPendingId = null;
+    editingRealId = null;
     el.editModal.style.display = 'none';
   }
 
   function saveEditModal() {
-    const p = pendingSessions.find((s) => s.id === editingPendingId);
-    if (!p) return closeEditModal();
-    const kind = el.editQualityKind.value;
-    p.name = el.editName.value.trim() || p.name;
-    p.date = el.editDate.value || p.date;
-    p.type = el.editType.value;
-    p.moving_time = Math.round((parseFloat(el.editDuration.value) || 0) * 60);
-    p.rpe = Math.min(10, Math.max(1, parseInt(el.editRpe.value) || 3));
-    p.description = el.editDescription.value;
-    if (kind) {
-      p.qualityKind = kind;
-      p.qualityParams = { ...currentIntervalOverrides() };
-    } else {
-      p.qualityKind = null;
-      p.qualityParams = null;
+    const description = el.editDescription.value;
+    const parsedMin = parseDescriptionDurationMinutes(description);
+    const name = el.editName.value.trim() || 'Séance';
+    const rpe = Math.min(10, Math.max(1, parseInt(el.editRpe.value) || 3));
+
+    if (editingPendingId) {
+      const p = pendingSessions.find((s) => s.id === editingPendingId);
+      if (!p) return closeEditModal();
+      const fallbackMin = Math.round((p.moving_time || 0) / 60) || 45;
+      Object.assign(p, {
+        name,
+        rpe,
+        description,
+        moving_time: Math.round((parsedMin > 0 ? parsedMin : fallbackMin) * 60),
+        qualityKind: null,
+        qualityParams: null,
+      });
+    } else if (editingRealId) {
+      const previous = pendingEdits[editingRealId] || findRealSessionById(editingRealId);
+      if (!previous) return closeEditModal();
+      const fallbackMin = Math.round((previous.moving_time || previous.movingTime || 0) / 60) || 45;
+      pendingEdits[editingRealId] = {
+        name,
+        rpe,
+        description,
+        moving_time: Math.round((parsedMin > 0 ? parsedMin : fallbackMin) * 60),
+        date: previous.date,
+        type: previous.type,
+      };
     }
     closeEditModal();
-    renderMonthCalendar();
-    if (aideVisible()) renderAidePlanif();
+    refreshAll();
+  }
+
+  /** Toutes les séances réelles (Intervals.icu) actuellement en cache, tous mois confondus. */
+  function findRealSessionById(id) {
+    return allRealSessionsInCache().find((s) => String(s.id) === String(id));
+  }
+
+  /** Marque/démarque une séance réelle pour suppression (en attente de confirmation) ; annule toute modification en attente sur cette séance. */
+  function toggleRealDelete(id) {
+    const key = String(id);
+    if (pendingDeletes.has(key)) {
+      pendingDeletes.delete(key);
+    } else {
+      delete pendingEdits[key];
+      pendingDeletes.add(key);
+    }
+    refreshAll();
   }
 
   /** Intervals.icu refuse un événement daté dans le passé : minuit est déjà passé pour "aujourd'hui". */
@@ -556,52 +644,166 @@
     return `${dateIso}T${hh}:${mm}:00`;
   }
 
-  // ── Send pending sessions ──────────────────────────────────────
-  async function sendPendingSessions() {
-    if (!pendingSessions.length) return;
+  function stagedCounts() {
+    return { adds: pendingSessions.length, edits: Object.keys(pendingEdits).length, deletes: pendingDeletes.size };
+  }
+
+  function updatePendingBanner() {
+    const { adds, edits, deletes } = stagedCounts();
+    if (adds + edits + deletes === 0) {
+      el.pendingBanner.style.display = 'none';
+      return;
+    }
+    el.pendingBanner.style.display = 'flex';
+    const parts = [];
+    if (adds) parts.push(`${adds} à ajouter`);
+    if (edits) parts.push(`${edits} à modifier`);
+    if (deletes) parts.push(`${deletes} à supprimer`);
+    el.pendingCount.textContent = parts.join(' · ');
+  }
+
+  function refreshAll() {
+    updatePendingBanner();
+    renderMonthCalendar();
+    renderLoadChart();
+  }
+
+  // ── Confirmation puis envoi vers Intervals.icu ─────────────────
+  function openConfirmSendModal() {
+    const { adds, edits, deletes } = stagedCounts();
+    if (adds + edits + deletes === 0) return;
+
+    const addItems = pendingSessions.map((p) => `${sportIcon(p.type)} ${escHtml(p.name)} — ${fmtDateFR(p.date)}`);
+    const editItems = Object.entries(pendingEdits).map(([id, d]) => {
+      const original = findRealSessionById(id);
+      const moved = original && original.date !== d.date ? ` (déplacée depuis ${fmtDateFR(original.date)})` : '';
+      return `${sportIcon(d.type)} ${escHtml(d.name)} — ${fmtDateFR(d.date)}${moved}`;
+    });
+    const deleteItems = [...pendingDeletes].map((id) => {
+      const original = findRealSessionById(id);
+      return original ? `${sportIcon(original.type)} ${escHtml(original.name)} — ${fmtDateFR(original.date)}` : `séance #${escHtml(id)}`;
+    });
+
+    const section = (title, items) => (items.length
+      ? `<p><strong>${title} (${items.length})</strong></p><ul>${items.map((t) => `<li>${t}</li>`).join('')}</ul>`
+      : '');
+
+    el.confirmSendSummary.innerHTML =
+      section('➕ Séances à ajouter', addItems) +
+      section('✎ Séances à modifier', editItems) +
+      section('🗑 Séances à supprimer', deleteItems);
+
+    el.confirmSendModal.style.display = 'flex';
+  }
+
+  function closeConfirmSendModal() {
+    el.confirmSendModal.style.display = 'none';
+  }
+
+  /** Envoie effectivement les ajouts/modifications/suppressions en attente vers Intervals.icu — appelé uniquement après confirmation explicite. */
+  async function confirmSend() {
+    closeConfirmSendModal();
     el.sendPendingBtn.disabled = true;
     el.sendResult.innerHTML = '<div class="alert alert-info">Envoi en cours…</div>';
 
-    const events = pendingSessions.map((p) => ({
-      start_date_local: eventStartDateTime(p.date),
-      category: 'WORKOUT',
-      type: p.type,
-      name: p.name,
-      description: p.description,
-      moving_time: Math.round(p.moving_time),
-      icu_rpe: Math.round(p.rpe),
-      external_id: `dashboard-${p.id}`,
-    }));
+    const touchedMonths = new Set();
+    let okCount = 0;
+    const errors = [];
 
-    try {
-      const res = await fetch('/api/planning/send-bulk', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ athleteId, events }),
-      });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error || 'Échec');
-      el.sendResult.innerHTML = `<div class="alert alert-success">✅ ${pendingSessions.length} séance(s) envoyée(s) avec succès dans Intervals.icu.</div>`;
-      const affectedMonths = [...new Set(pendingSessions.map((p) => p.date.slice(0, 7)))];
-      affectedMonths.forEach((mk) => { delete calendarCache[mk]; });
-      pendingSessions = [];
-      updatePendingBanner();
-      renderMonthCalendar();
-      fetchCalendarMonth(currentYear, currentMonth);
-    } catch (e) {
-      el.sendResult.innerHTML = `<div class="alert alert-error">Erreur : ${escHtml(e.message)}</div>`;
-    } finally {
-      el.sendPendingBtn.disabled = false;
+    if (pendingSessions.length) {
+      const events = pendingSessions.map((p) => ({
+        start_date_local: eventStartDateTime(p.date),
+        category: 'WORKOUT',
+        type: p.type,
+        name: p.name,
+        description: p.description,
+        moving_time: Math.round(p.moving_time),
+        icu_rpe: Math.round(p.rpe),
+        external_id: `dashboard-${p.id}`,
+      }));
+      try {
+        const res = await fetch('/api/planning/send-bulk', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ athleteId, events, confirmed: true }),
+        });
+        const body = await res.json();
+        if (!res.ok) throw new Error(body.error || "Échec de l'envoi des nouvelles séances.");
+        okCount += pendingSessions.length;
+        pendingSessions.forEach((p) => touchedMonths.add(p.date.slice(0, 7)));
+        pendingSessions = [];
+      } catch (e) {
+        errors.push(e.message);
+      }
     }
+
+    for (const [id, data] of Object.entries(pendingEdits)) {
+      try {
+        const res = await fetch(`/api/planning/event/${encodeURIComponent(id)}/update`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            athleteId,
+            confirmed: true,
+            patch: {
+              start_date_local: eventStartDateTime(data.date),
+              type: data.type,
+              name: data.name,
+              description: data.description,
+              moving_time: Math.round(data.moving_time),
+              icu_rpe: Math.round(data.rpe),
+            },
+          }),
+        });
+        const body = await res.json();
+        if (!res.ok) throw new Error(body.error || `Échec de la modification de la séance #${id}.`);
+        okCount++;
+        touchedMonths.add(data.date.slice(0, 7));
+        delete pendingEdits[id];
+      } catch (e) {
+        errors.push(e.message);
+      }
+    }
+
+    for (const id of [...pendingDeletes]) {
+      try {
+        const res = await fetch(`/api/planning/event/${encodeURIComponent(id)}/delete`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ athleteId, confirmed: true }),
+        });
+        const body = await res.json();
+        if (!res.ok) throw new Error(body.error || `Échec de la suppression de la séance #${id}.`);
+        okCount++;
+        pendingDeletes.delete(id);
+      } catch (e) {
+        errors.push(e.message);
+      }
+    }
+
+    touchedMonths.forEach((mk) => { delete calendarCache[mk]; });
+    if (errors.length) {
+      el.sendResult.innerHTML = `<div class="alert alert-error">${okCount} action(s) envoyée(s), ${errors.length} erreur(s) : ${escHtml(errors.join(' · '))}</div>`;
+    } else {
+      el.sendResult.innerHTML = `<div class="alert alert-success">✅ ${okCount} action(s) envoyée(s) avec succès dans Intervals.icu.</div>`;
+    }
+    el.sendPendingBtn.disabled = false;
+    refreshAll();
   }
 
-  // ── Aide planif ────────────────────────────────────────────────
+  // ── Charge & ACWR prévisionnels ─────────────────────────────────
   function pendingLoad(p) {
     return (p.rpe || 3) * Math.round((p.moving_time || 0) / 60);
   }
 
   function currentWeekIso() {
     return getMondayIso(todayIso());
+  }
+
+  function weeksBetween(aIso, bIso) {
+    const a = new Date(aIso + 'T00:00:00Z').getTime();
+    const b = new Date(bIso + 'T00:00:00Z').getTime();
+    return Math.round((b - a) / (7 * 86400000));
   }
 
   function getPlanWeeks(nWeeks) {
@@ -618,18 +820,66 @@
     return getPendingInWeek(weekStart).reduce((s, p) => s + pendingLoad(p), 0);
   }
 
+  /** Charge réelle (Intervals.icu) d'une semaine (WORKOUT/PLAN déjà envoyés), modifs/suppressions en attente appliquées. */
+  function weekRealLoad(weekStart) {
+    const weekEnd = addDaysIso(weekStart, 6);
+    return allRealSessionsInCache()
+      .map((s) => {
+        if (s.id == null) return s;
+        const key = String(s.id);
+        if (pendingDeletes.has(key)) return null;
+        const edit = pendingEdits[key];
+        return edit ? { ...s, ...edit, trainingLoad: null } : s;
+      })
+      .filter((s) => s && s.date >= weekStart && s.date <= weekEnd)
+      .reduce((sum, s) => {
+        const durMin = s.moving_time ? Math.round(s.moving_time / 60) : (s.movingTime ? Math.round(s.movingTime / 60) : null);
+        return sum + (realSessionLoad(s, durMin) || 0);
+      }, 0);
+  }
+
+  /** Ajuste le total serveur (déjà testé) de la semaine en cours avec les modifs/suppressions en attente, pour un affichage en direct. */
+  function currentWeekStagedDelta() {
+    const touchedIds = new Set([...Object.keys(pendingEdits), ...pendingDeletes]);
+    if (!touchedIds.size) return 0;
+    const weekStart = currentWeekIso();
+    const weekEnd = addDaysIso(weekStart, 6);
+    let delta = 0;
+    for (const s of allRealSessionsInCache()) {
+      if (s.id == null || !touchedIds.has(String(s.id))) continue;
+      const key = String(s.id);
+      const durMin = s.moving_time ? Math.round(s.moving_time / 60) : (s.movingTime ? Math.round(s.movingTime / 60) : null);
+      const rawLoad = realSessionLoad(s, durMin) || 0;
+      const inWeekOriginal = s.date >= weekStart && s.date <= weekEnd;
+      if (pendingDeletes.has(key)) {
+        if (inWeekOriginal) delta -= rawLoad;
+        continue;
+      }
+      const edit = pendingEdits[key];
+      if (edit) {
+        const editedDurMin = edit.moving_time ? Math.round(edit.moving_time / 60) : durMin;
+        const newLoad = realSessionLoad({ ...s, ...edit, trainingLoad: null }, editedDurMin) || 0;
+        const inWeekNew = edit.date >= weekStart && edit.date <= weekEnd;
+        if (inWeekOriginal) delta -= rawLoad;
+        if (inWeekNew) delta += newLoad;
+      }
+    }
+    return delta;
+  }
+
   /**
    * Charge totale d'une semaine pour l'ACWR prévisionnel : pour la semaine en cours, projection
    * "pure plan" (charge déjà planifiée sur Intervals.icu pour toute la semaine + séances en attente
-   * non envoyées), sans mélanger le réel déjà fait — même logique que le dashboard, pour que les deux
-   * s'accordent. Pour les semaines futures, il n'existe de toute façon aucun réel : uniquement le plan.
+   * non envoyées), sans mélanger le réel déjà fait — même logique que le dashboard. Pour les semaines
+   * futures : charge déjà envoyée sur Intervals.icu (calendrier en cache) + séances en attente. Le
+   * tout ajusté en direct par les modifications/suppressions en attente.
    */
   function weekTotalLoad(week) {
     if (week === currentWeekIso()) {
       const plannedTotal = (chronicData && chronicData.currentWeekPlannedTotal) || 0;
-      return plannedTotal + weekPendingLoad(week);
+      return Math.max(0, plannedTotal + currentWeekStagedDelta() + weekPendingLoad(week));
     }
-    return weekPendingLoad(week);
+    return weekRealLoad(week) + weekPendingLoad(week);
   }
 
   /** Semaines réalisées : uniquement les 4 dernières (fenêtre de calcul de la charge chronique), pour ne pas surcharger le graphique. */
@@ -644,13 +894,22 @@
 
   function chronicBeforeWeek(weekStart) {
     const loads = historicalWeeklyLoads().map((w) => w.load);
-    for (const week of getPlanWeeks(16)) {
+    const span = Math.max(16, weeksBetween(currentWeekIso(), weekStart) + 1);
+    for (const week of getPlanWeeks(span)) {
       if (week >= weekStart) break;
       loads.push(weekTotalLoad(week));
     }
     const windowVals = loads.slice(-4);
     if (windowVals.length >= 3) return windowVals.reduce((s, v) => s + v, 0) / windowVals.length;
     return chronicData ? chronicData.chronic : 0;
+  }
+
+  /** Charge/ACWR prévu d'une semaine quelconque — utilisé par la barre d'actions du calendrier. */
+  function weekMetrics(week) {
+    const chronic = chronicBeforeWeek(week);
+    const weeklyLoad = weekTotalLoad(week);
+    const acwr = chronic > 0 ? weeklyLoad / chronic : null;
+    return { weeklyLoad, chronic, acwr };
   }
 
   function projectWeeklyAcwr(planWeeks) {
@@ -716,9 +975,7 @@
       pendingSessions.push(pending);
     }
 
-    updatePendingBanner();
-    renderMonthCalendar();
-    renderAidePlanif();
+    refreshAll();
   }
 
   /** ACWR cible par défaut proposé selon le type de semaine (éditable ensuite par l'utilisateur). */
@@ -749,14 +1006,10 @@
   async function applyAiPlanWeek(week, { planningType, targetAcwr, comment }) {
     const state = getWeekState(week);
     state.planningType = planningType;
-    const btn = el.cycleWeeksContainer && el.cycleWeeksContainer.querySelector(`.cw-ai-prefill[data-week="${week}"]`);
+    const btn = el.monthGrid && el.monthGrid.querySelector(`.cw-ai-prefill[data-week="${week}"]`);
     if (btn) { btn.disabled = true; btn.textContent = '⏳ IA…'; }
 
     try {
-      const nWeeksInput = parseInt(el.nWeeks.value) || 8;
-      const cycleStart = getPlanWeeks(nWeeksInput)[0];
-      const note = findCycleNote(cycleStart, nWeeksInput);
-
       const res = await fetch('/api/planning/ai-week', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -768,7 +1021,7 @@
           nStrength: state.nStrength,
           chronicLoad: chronicBeforeWeek(week),
           targetAcwr,
-          constraints: note ? note.note : '',
+          constraints: '',
           comment,
           recentWeeks: historicalWeeklyLoads().map((w) => ({ week: w.week, load: Math.round(w.load) })),
         }),
@@ -791,9 +1044,7 @@
         });
       }
 
-      updatePendingBanner();
-      renderMonthCalendar();
-      renderAidePlanif();
+      refreshAll();
       if (body.plan.rationale && el.sendResult) {
         el.sendResult.innerHTML = `<div class="alert alert-info">🤖 ${escHtml(body.plan.rationale)}</div>`;
       }
@@ -803,60 +1054,21 @@
     }
   }
 
-  // ── Note de cycle ───────────────────────────────────────────────
-  function findCycleNote(startWeek, nWeeks) {
-    return cycleNotes.find((c) => c.startWeek === startWeek && c.nWeeks === nWeeks);
-  }
-
-  function renderCycleNote(planWeeks, nWeeks) {
-    if (!el.cycleRangeLabel) return;
-    const startWeek = planWeeks[0];
-    const endWeek = addDaysIso(planWeeks[planWeeks.length - 1], 6);
-    el.cycleRangeLabel.textContent = `${fmtDateFR(startWeek)} → ${fmtDateFR(endWeek)}`;
-    const existing = findCycleNote(startWeek, nWeeks);
-    if (el.cycleNoteInput) el.cycleNoteInput.value = existing ? existing.note : '';
-    if (el.cycleNoteDisplay) el.cycleNoteDisplay.textContent = existing && existing.note ? `📝 ${existing.note}` : '';
-  }
-
-  async function saveCycleNote() {
-    const nWeeks = parseInt(el.nWeeks.value) || 8;
-    const planWeeks = getPlanWeeks(nWeeks);
-    const startWeek = planWeeks[0];
-    const note = el.cycleNoteInput.value.trim();
-    const existing = findCycleNote(startWeek, nWeeks);
-    if (existing) existing.note = note;
-    else cycleNotes.push({ id: `cycle-${Date.now()}`, startWeek, nWeeks, note });
-    saveCycleNotes();
-
-    if (!note) {
-      if (el.cycleNoteDisplay) el.cycleNoteDisplay.textContent = '';
-      return;
+  /** Précharge (best-effort) les mois couverts par l'horizon du graphique, pour que la charge déjà envoyée sur les semaines futures apparaisse dans le graphique et les barres d'action du calendrier. */
+  function prefetchHorizonMonths(planWeeks) {
+    const keys = new Set();
+    for (const week of planWeeks) {
+      [week, addDaysIso(week, 6)].forEach((d) => keys.add(`${d.slice(0, 4)}-${d.slice(5, 7)}`));
     }
-    if (el.cycleNoteDisplay) el.cycleNoteDisplay.textContent = `📝 ${note} · envoi à Intervals.icu…`;
-    if (el.saveCycleNoteBtn) el.saveCycleNoteBtn.disabled = true;
-    try {
-      const events = [{
-        start_date_local: eventStartDateTime(startWeek),
-        category: 'NOTE',
-        name: note,
-        external_id: `dashboard-cycle-${startWeek}-${nWeeks}`,
-      }];
-      const res = await fetch('/api/planning/send-bulk', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ athleteId, events }),
-      });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error || 'Échec');
-      if (el.cycleNoteDisplay) el.cycleNoteDisplay.textContent = `📝 ${note} · envoyée à Intervals.icu`;
-    } catch (e) {
-      if (el.cycleNoteDisplay) el.cycleNoteDisplay.textContent = `📝 ${note} · ⚠️ non envoyée (${e.message})`;
-    } finally {
-      if (el.saveCycleNoteBtn) el.saveCycleNoteBtn.disabled = false;
-    }
+    keys.forEach((mk) => {
+      if (calendarCache[mk] === undefined) {
+        const [y, m] = mk.split('-').map(Number);
+        fetchCalendarMonth(y, m);
+      }
+    });
   }
 
-  async function renderAidePlanif() {
+  async function renderLoadChart() {
     if (!window.Chart) {
       await new Promise((resolve, reject) => {
         const s = document.createElement('script');
@@ -868,12 +1080,11 @@
 
     const nWeeks = parseInt(el.nWeeks.value) || 8;
     const planWeeks = getPlanWeeks(nWeeks);
+    prefetchHorizonMonths(planWeeks); // best-effort ; fetchCalendarMonth rafraîchira tout à réception
     // Semaines réalisées (4 dernières max) : point de départ "comme si rien n'était encore planifié".
     const realized = historicalWeeklyLoads();
     const nRealized = realized.length;
     const projection = projectWeeklyAcwr(planWeeks);
-
-    renderCycleNote(planWeeks, nWeeks);
 
     const latestReal = realized[nRealized - 1];
     if (el.cycleSummary) {
@@ -895,7 +1106,11 @@
       }
       return 0;
     });
-    const plannedBars = timelineWeeks.map((week, i) => (i < nRealized ? 0 : Math.round(weekPendingLoad(week))));
+    const plannedBars = timelineWeeks.map((week, i) => {
+      if (i < nRealized) return 0;
+      if (week === currentWeekIso()) return Math.round(weekPendingLoad(week));
+      return Math.round(weekTotalLoad(week));
+    });
 
     const acwrReal = timelineWeeks.map((_, i) => (i < nRealized && realized[i].acwr != null ? parseFloat(realized[i].acwr.toFixed(2)) : null));
     const acwrForecast = timelineWeeks.map((_, i) => {
@@ -982,12 +1197,7 @@
           if (!elements.length) return;
           const idx = elements[0].index;
           if (idx < nRealized) return;
-          const week = planWeeks[idx - nRealized];
-          const card = document.getElementById(`plan-week-${week}`);
-          if (!card) return;
-          card.scrollIntoView({ behavior: 'smooth', block: 'start' });
-          card.classList.add('flash');
-          setTimeout(() => card.classList.remove('flash'), 1400);
+          goToWeek(planWeeks[idx - nRealized]);
         },
         plugins: {
           legend: { labels: { color: '#9aa7c2', filter: (item) => item.text !== '' } },
@@ -1023,53 +1233,22 @@
       },
     });
 
-    renderCycleWeeks(planWeeks, projection);
-    renderWeekTemplates();
   }
 
-  function planDayCellHtml(date, dayIndex) {
-    const dayPending = pendingSessions.filter((p) => p.date === date);
-    const isPast = date < todayIso();
-    return `<div class="plan-day${isPast ? ' past' : ''}" data-date="${date}">
-      <div class="plan-day-head"><span>${DAYS_FR[dayIndex]}</span><strong>${fmtDateFR(date)}</strong></div>
-      <div class="plan-day-sessions">
-        ${dayPending.map((s) => sessionChipHtml(s, true)).join('') || '<span class="plan-empty">Libre</span>'}
-      </div>
-      <button class="plan-add-session" data-date="${date}">+ Séance</button>
-    </div>`;
-  }
-
-  function renderCycleWeeks(planWeeks, projection) {
-    if (!el.cycleWeeksContainer) return;
-
-    el.cycleWeeksContainer.innerHTML = planWeeks.map((week, idx) => {
-      const state = getWeekState(week);
-      const metrics = projection[idx];
-      const acwrText = metrics.acwr == null ? 'n/a' : metrics.acwr.toFixed(2);
-      const days = Array.from({ length: 7 }, (_, i) => planDayCellHtml(addDaysIso(week, i), i)).join('');
-
-      return `<div class="cycle-week-card${metrics.isCurrentWeek ? ' is-current' : ''}" id="plan-week-${week}" data-week="${week}">
-        <div class="cycle-week-header">
-          <div>
-            <strong>Semaine du ${fmtDateFR(week)}${metrics.isCurrentWeek ? ' (en cours)' : ''}</strong>
-            <span class="caption">${Math.round(metrics.weeklyLoad)} Foster · ACWR ${acwrText}</span>
-          </div>
-          <div class="cycle-week-controls">
-            <select class="cw-plan-type" data-week="${week}" title="Type de semaine">
-              <option value="Charge"${state.planningType === 'Charge' ? ' selected' : ''}>Charge</option>
-              <option value="Récupération"${state.planningType === 'Récupération' ? ' selected' : ''}>Récup</option>
-              <option value="Choc"${state.planningType === 'Choc' ? ' selected' : ''}>Choc</option>
-            </select>
-            <input type="number" class="cw-run" data-week="${week}" min="0" max="8" value="${state.nRun}" title="Séances CAP" />
-            <input type="number" class="cw-bike" data-week="${week}" min="0" max="8" value="${state.nBike}" title="Séances vélo" />
-            <input type="number" class="cw-strength" data-week="${week}" min="0" max="6" value="${state.nStrength}" title="Séances renfo" />
-            <button class="cw-prefill btn-sm" data-week="${week}">Préremplir</button>
-            <button class="cw-ai-prefill btn-sm" data-week="${week}" title="Proposer une semaine via IA (Claude), en tenant compte de la note de cycle comme contraintes">✨ IA</button>
-          </div>
-        </div>
-        <div class="plan-week-calendar">${days}</div>
-      </div>`;
-    }).join('');
+  /** Navigue le calendrier vers le mois d'une semaine donnée et met en évidence sa barre d'actions (utilisé par le clic sur le graphique et par l'application d'un template). */
+  function goToWeek(week) {
+    const weekDate = new Date(week + 'T00:00:00Z');
+    currentYear = weekDate.getUTCFullYear();
+    currentMonth = weekDate.getUTCMonth() + 1;
+    renderMonthCalendar();
+    fetchCalendarMonth(currentYear, currentMonth);
+    requestAnimationFrame(() => {
+      const bar = el.monthGrid.querySelector(`.mcal-week-actions[data-week="${week}"]`);
+      if (!bar) return;
+      bar.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      bar.classList.add('flash');
+      setTimeout(() => bar.classList.remove('flash'), 1400);
+    });
   }
 
   // ── Week templates ─────────────────────────────────────────────
@@ -1144,17 +1323,9 @@
       const id = `pending-${Date.now()}-${Math.random().toString(36).slice(2)}`;
       pendingSessions.push({ id, date, name: s.name, type: s.type, description: '', moving_time: s.durationMin * 60, rpe: s.rpe });
     }
-    updatePendingBanner();
-    renderMonthCalendar();
-    // Navigate to the calendar month containing the applied week
-    const weekDate = new Date(weekStart + 'T00:00:00Z');
-    currentYear = weekDate.getUTCFullYear();
-    currentMonth = weekDate.getUTCMonth() + 1;
-    document.querySelectorAll('.plan-tab').forEach((t) => t.classList.remove('active'));
-    document.querySelector('.plan-tab[data-view="calendar"]').classList.add('active');
-    el.viewCalendar.style.display = 'block';
-    el.viewAidePlanif.style.display = 'none';
-    fetchCalendarMonth(currentYear, currentMonth);
+    el.templatesModal.style.display = 'none';
+    refreshAll();
+    goToWeek(weekStart);
   }
 
   function openTplSessionEditor(tplIdx, sessionIdx, dow) {
@@ -1179,9 +1350,13 @@
       athleteId = el.athleteSelect.value;
       calendarCache = {};
       intervalsWorkouts = [];
+      pendingSessions = [];
+      pendingEdits = {};
+      pendingDeletes.clear();
       loadIntervalsWorkouts();
       loadChronicData();
       fetchCalendarMonth(currentYear, currentMonth);
+      refreshAll();
     });
   }
 
@@ -1199,22 +1374,21 @@
   el.clearSel.addEventListener('click', clearSelection);
   el.clearPendingBtn.addEventListener('click', () => {
     pendingSessions = [];
-    updatePendingBanner();
-    renderMonthCalendar();
-    if (el.viewAidePlanif && el.viewAidePlanif.style.display !== 'none') renderAidePlanif();
+    pendingEdits = {};
+    pendingDeletes.clear();
+    refreshAll();
   });
-  el.sendPendingBtn.addEventListener('click', sendPendingSessions);
+  el.sendPendingBtn.addEventListener('click', openConfirmSendModal);
+  el.confirmSendCancel.addEventListener('click', closeConfirmSendModal);
+  el.confirmSendModal.addEventListener('click', (e) => { if (e.target === el.confirmSendModal) closeConfirmSendModal(); });
+  el.confirmSendOk.addEventListener('click', confirmSend);
 
-  document.querySelectorAll('.plan-tab').forEach((tab) => {
-    tab.addEventListener('click', () => {
-      document.querySelectorAll('.plan-tab').forEach((t) => t.classList.remove('active'));
-      tab.classList.add('active');
-      const view = tab.dataset.view;
-      el.viewCalendar.style.display = view === 'calendar' ? 'block' : 'none';
-      el.viewAidePlanif.style.display = view === 'aide' ? 'block' : 'none';
-      if (view === 'aide') renderAidePlanif();
-    });
+  el.openTemplatesBtn.addEventListener('click', () => {
+    renderWeekTemplates();
+    el.templatesModal.style.display = 'flex';
   });
+  el.templatesClose.addEventListener('click', () => { el.templatesModal.style.display = 'none'; });
+  el.templatesModal.addEventListener('click', (e) => { if (e.target === el.templatesModal) el.templatesModal.style.display = 'none'; });
 
   el.prevMonth.addEventListener('click', () => {
     currentMonth--; if (currentMonth < 1) { currentMonth = 12; currentYear--; }
@@ -1229,20 +1403,45 @@
     renderMonthCalendar(); fetchCalendarMonth(currentYear, currentMonth);
   });
 
-  // Calendar delegation: add / edit / remove
+  // Calendrier : semaine (préremplir/IA/paramètres), séances (ajout/édition/suppression)
+  el.monthGrid.addEventListener('change', (e) => {
+    const week = e.target.dataset.week;
+    if (!week) return;
+    const state = getWeekState(week);
+    if (e.target.classList.contains('cw-plan-type')) state.planningType = e.target.value;
+    else if (e.target.classList.contains('cw-run')) state.nRun = Math.max(0, parseInt(e.target.value) || 0);
+    else if (e.target.classList.contains('cw-bike')) state.nBike = Math.max(0, parseInt(e.target.value) || 0);
+    else if (e.target.classList.contains('cw-strength')) state.nStrength = Math.max(0, parseInt(e.target.value) || 0);
+  });
+
   el.monthGrid.addEventListener('click', (e) => {
+    const prefillBtn = e.target.closest('.cw-prefill');
+    if (prefillBtn) { applyGeneratedPlanWeek(prefillBtn.dataset.week); return; }
+
+    const aiBtn = e.target.closest('.cw-ai-prefill');
+    if (aiBtn) { openAiPlanModal(aiBtn.dataset.week); return; }
+
     const removeBtn = e.target.closest('.chip-remove');
     if (removeBtn) {
       const chip = removeBtn.closest('.session-chip');
       if (chip && chip.dataset.pendingId) {
         pendingSessions = pendingSessions.filter((p) => p.id !== chip.dataset.pendingId);
-        updatePendingBanner(); renderMonthCalendar();
-        if (el.viewAidePlanif && el.viewAidePlanif.style.display !== 'none') renderAidePlanif();
+        refreshAll();
+      } else if (chip && chip.dataset.eventId) {
+        toggleRealDelete(chip.dataset.eventId);
       }
       return;
     }
-    const chip = e.target.closest('.session-chip.pending');
-    if (chip && chip.dataset.pendingId) { openEditModal(chip.dataset.pendingId); return; }
+
+    const pendingChip = e.target.closest('.session-chip.pending');
+    if (pendingChip && pendingChip.dataset.pendingId) { openEditModal(pendingChip.dataset.pendingId); return; }
+
+    const realChip = e.target.closest('.session-chip.real');
+    if (realChip && realChip.dataset.eventId) { openEditModalForReal(realChip.dataset.eventId); return; }
+
+    const addBtn = e.target.closest('.plan-add-session');
+    if (addBtn) { addManualPlanSession(addBtn.dataset.date); return; }
+
     const dayCell = e.target.closest('.mcal-day:not(.outside)');
     if (dayCell && selectedSession) addPendingSession(dayCell.dataset.date);
   });
@@ -1250,23 +1449,10 @@
   el.editSave.addEventListener('click', saveEditModal);
   el.editCancel.addEventListener('click', closeEditModal);
   el.editModal.addEventListener('click', (e) => { if (e.target === el.editModal) closeEditModal(); });
-  el.editType.addEventListener('change', () => {
-    populateQualityKindOptions(el.editType.value, '');
-    el.editQualityKind.value = '';
-    el.editIntervalsFields.style.display = 'none';
-  });
-  el.editQualityKind.addEventListener('change', () => {
-    const template = SESSION_LIBRARY[el.editType.value] && SESSION_LIBRARY[el.editType.value][el.editQualityKind.value];
-    if (template) fillIntervalFieldsFromParams(template);
-    refreshQualityPreview();
-  });
-  [el.editReps, el.editWorkDuration, el.editWorkLow, el.editWorkHigh, el.editRecDuration].forEach((input) => {
-    input.addEventListener('input', refreshQualityPreview);
-  });
+  el.editDescription.addEventListener('input', updateEditComputedInfo);
+  el.editRpe.addEventListener('input', updateEditComputedInfo);
 
-  el.generateBtn.addEventListener('click', renderAidePlanif);
-  if (el.nWeeks) el.nWeeks.addEventListener('change', renderAidePlanif);
-  if (el.saveCycleNoteBtn) el.saveCycleNoteBtn.addEventListener('click', saveCycleNote);
+  if (el.nWeeks) el.nWeeks.addEventListener('change', renderLoadChart);
 
   el.aiPlanType.addEventListener('change', () => { el.aiPlanAcwr.value = defaultTargetAcwrFor(el.aiPlanType.value); });
   el.aiPlanCancel.addEventListener('click', closeAiPlanModal);
@@ -1280,44 +1466,6 @@
     closeAiPlanModal();
     applyAiPlanWeek(week, { planningType, targetAcwr, comment });
   });
-
-  if (el.cycleWeeksContainer) {
-    el.cycleWeeksContainer.addEventListener('change', (e) => {
-      const week = e.target.dataset.week;
-      if (!week) return;
-      const state = getWeekState(week);
-      if (e.target.classList.contains('cw-plan-type')) state.planningType = e.target.value;
-      else if (e.target.classList.contains('cw-run')) state.nRun = Math.max(0, parseInt(e.target.value) || 0);
-      else if (e.target.classList.contains('cw-bike')) state.nBike = Math.max(0, parseInt(e.target.value) || 0);
-      else if (e.target.classList.contains('cw-strength')) state.nStrength = Math.max(0, parseInt(e.target.value) || 0);
-    });
-
-    el.cycleWeeksContainer.addEventListener('click', (e) => {
-      const prefillBtn = e.target.closest('.cw-prefill');
-      if (prefillBtn) { applyGeneratedPlanWeek(prefillBtn.dataset.week); return; }
-
-      const aiBtn = e.target.closest('.cw-ai-prefill');
-      if (aiBtn) { openAiPlanModal(aiBtn.dataset.week); return; }
-
-      const removeBtn = e.target.closest('.chip-remove');
-      if (removeBtn) {
-        const chip = removeBtn.closest('.session-chip');
-        if (chip && chip.dataset.pendingId) {
-          pendingSessions = pendingSessions.filter((p) => p.id !== chip.dataset.pendingId);
-          updatePendingBanner();
-          renderMonthCalendar();
-          renderAidePlanif();
-        }
-        return;
-      }
-      const chip = e.target.closest('.session-chip.pending');
-      if (chip && chip.dataset.pendingId) { openEditModal(chip.dataset.pendingId); return; }
-      const addBtn = e.target.closest('.plan-add-session');
-      if (addBtn) addManualPlanSession(addBtn.dataset.date);
-    });
-
-    wireDragAndDrop(el.cycleWeeksContainer, '.plan-day');
-  }
 
   wireDragAndDrop(el.monthGrid, '.mcal-day:not(.outside)');
 
@@ -1350,5 +1498,6 @@
   loadIntervalsWorkouts();
   renderMonthCalendar();
   fetchCalendarMonth(currentYear, currentMonth);
+  renderLoadChart();
 
 })();

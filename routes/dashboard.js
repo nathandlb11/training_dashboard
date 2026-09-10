@@ -64,6 +64,7 @@ router.get('/dashboard', async (req, res) => {
     params,
     bootstrapData: data,
     error,
+    widgetToken: process.env.WIDGET_TOKEN || '',
   });
 });
 

@@ -53,10 +53,16 @@ async function getPlannedCalendar(apiKey, athleteId, start, end) {
   return raw
     .filter((e) => ['WORKOUT', 'PLAN'].includes(String(e.category || '').toUpperCase()))
     .map((e) => ({
+      id: e.id ?? null,
       date: dateOnly(e.start_date_local || e.start_date),
       name: e.name || '',
       type: e.type || '',
+      description: e.description || '',
       temps: e.moving_time ? fmtTime(e.moving_time) : '',
+      movingTime: e.moving_time || 0,
+      // rpe effectif (icu_rpe réel s'il existe, sinon heuristique par nom/sport) : même logique que le
+      // dashboard/aide-planif pour que la charge Foster affichée soit cohérente partout.
+      rpe: effectiveRpeForPlanned(e.type, e.name, e.icu_rpe),
       trainingLoad: e.icu_training_load ?? null,
       externalId: e.external_id ?? '',
     }))

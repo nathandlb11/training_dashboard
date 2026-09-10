@@ -203,29 +203,31 @@
     // structure "warmup_reps_cooldown"
     const reps = Math.max(1, Math.trunc(template.reps));
 
-    const lines = [
-      `- Echauffement ${fmtIntervalsDuration(template.warmup_duration)} ` +
-        `${Math.trunc(template.warmup_low)}-${Math.trunc(template.warmup_high)}% ${unit}`,
+    const blocks = [
+      [
+        `- Echauffement ${fmtIntervalsDuration(template.warmup_duration)} ` +
+          `${Math.trunc(template.warmup_low)}-${Math.trunc(template.warmup_high)}% ${unit}`,
+      ],
     ];
 
-    if (reps > 1) lines.push(`${reps}x`);
-
-    lines.push(
+    const mainBlock = [];
+    if (reps > 1) mainBlock.push(`${reps}x`);
+    mainBlock.push(
       `- ${fmtIntervalsDuration(template.work_duration)} ` +
         `${Math.trunc(template.work_low)}-${Math.trunc(template.work_high)}% ${unit}`
     );
-
     if (reps > 1 && template.rec_duration > 0) {
-      lines.push(
+      mainBlock.push(
         `- ${fmtIntervalsDuration(template.rec_duration)} ` +
           `${Math.trunc(template.rec_low)}-${Math.trunc(template.rec_high)}% ${unit}`
       );
     }
+    blocks.push(mainBlock);
 
-    lines.push(
+    blocks.push([
       `- Retour au calme ${fmtIntervalsDuration(template.cooldown_duration)} ` +
-        `${Math.trunc(template.cooldown_low)}-${Math.trunc(template.cooldown_high)}% ${unit}`
-    );
+        `${Math.trunc(template.cooldown_low)}-${Math.trunc(template.cooldown_high)}% ${unit}`,
+    ]);
 
     const total =
       Number(template.warmup_duration) +
@@ -233,7 +235,8 @@
       (template.rec_duration > 0 ? reps : 0) * Number(template.rec_duration) +
       Number(template.cooldown_duration);
 
-    return { description: lines.join('\n'), durationMin: total };
+    // Blocs séparés par une ligne vide : une répétition "Nx" ne s'applique qu'aux lignes de SON bloc.
+    return { description: blocks.map((b) => b.join('\n')).join('\n\n'), durationMin: total };
   }
 
   return { SESSION_LIBRARY, buildSessionDescription };

@@ -63,9 +63,21 @@ Réponds UNIQUEMENT avec un objet JSON valide, sans balises markdown ni texte au
   ],
   "rationale": string
 }
-Le champ "description" est optionnel : si fourni, utilise le format Intervals.icu (lignes commençant par
-"- ", ex: "- Echauffement 15min 70-80% LTHR" ou "- Montée 8min 75-85% FTP"). Le champ "rationale" est une
-courte explication (2-3 phrases) des choix effectués, en français.`;
+Le champ "description" est obligatoire, notamment pour les séances qualité/intervalles :
+l'appli recalcule ensuite la durée ET la charge Foster à partir de ce texte dès que la séance est modifiée
+manuellement, donc il doit être strictement au format Intervals.icu suivant :
+- Chaque étape est une ligne commençant par "- ", au format "- <libellé optionnel> <durée> <bas>-<haut>%
+  <ZONE>" (ex: "- Echauffement 15m 70-80% LTHR", "- 6m 94-100% LTHR"). <ZONE> est l'unité de pilotage
+  (LTHR, FTP, Pace, HR...). La durée s'exprime en h/m/s, combinables (ex: 1h20m, 15m, 30s).
+- Pour une répétition, ajoute juste avant les lignes concernées une ligne "Nx" ou "<Label> Nx" (ex: "4x"
+  ou "Seuil 4x"), qui ne commence PAS par "- ".
+- Sépare TOUJOURS les blocs (échauffement / bloc de répétition / retour au calme) par une ligne vide :
+  c'est ce qui délimite la fin d'une répétition (les lignes "- " suivant un bloc vide ne sont plus répétées).
+- La somme des durées de toutes les étapes, répétitions comprises, DOIT être égale à durationMin.
+Exemple pour une séance de 45 minutes avec un échauffement de 15min, 4 répétitions de 3min/2min et un
+retour au calme de 10min :
+"- Echauffement 15m 70-80% LTHR\n\n4x\n- 3m 100-110% FTP\n- 2m 50-60% FTP\n\n- Retour au calme 10m 50-60% LTHR"
+Le champ "rationale" est une courte explication (2-3 phrases) des choix effectués, en français.`;
 
 /** Anthropic (Claude) — nécessite un compte payant / crédits. */
 async function callAnthropic(system, userContent) {
