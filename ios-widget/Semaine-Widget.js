@@ -1,283 +1,1355 @@
-// Widget iPhone Semaine — à ouvrir/coller dans l'app Scriptable (scriptable.app)
-// Installation :
-//  1. Renseigne BASE_URL, ATHLETE_ID, TOKEN ci-dessous (mêmes valeurs que ACWR-Widget.js / CAP-Widget.js).
-//  2. Colle ce script dans un nouveau script Scriptable, nomme-le "Semaine Widget".
-//  3. Écran d'accueil iPhone -> appui long -> "+" -> Scriptable -> taille petite/moyenne/grande
-//     -> Modifier le widget -> Script = "Semaine Widget".
+// Widget iPhone Semaine — Scriptable
 //
-// Si WIDGET_TOKEN est défini côté serveur (.env), TOKEN doit avoir la même valeur.
-
-const BASE_URL = "https://training-dashboard-intervals-icu-ten.vercel.app/";
-const ATHLETE_ID = "i661521";
-const TOKEN = "azhTgjfP0gT"; // laisser vide si WIDGET_TOKEN n'est pas configuré côté serveur
-
+// Affiche :
+// - Lundi -> Dimanche
+// - Séances planifiées / réalisées fusionnées
+// - Charge réalisée / charge planifiée
+// - Double barre : réalisé vs planifié à date
+// - Colonnes légèrement plus larges
+//
+// BARRES :
+// - Vert  = charge réellement réalisée sur la semaine
+// - Orange = charge planifiée cumulée jusqu'à aujourd'hui
+//
+// =========================================================
+// CONFIGURATION
+// =========================================================
+const BASE_URL =
+ "https://training-dashboard-intervals-icu-ten.vercel.app/";
+const ATHLETE_ID =
+ "i661521";
+const TOKEN =
+ "azhTgjfP0gT";
+// =========================================================
+// API
+// =========================================================
 async function fetchDashboardData() {
-  const base = BASE_URL.replace(/\/+$/, '');
-  const url = `${base}/api/dashboard-data?athleteId=${encodeURIComponent(ATHLETE_ID)}&forecastWeeks=1${TOKEN ? `&token=${encodeURIComponent(TOKEN)}` : ''}`;
-  const req = new Request(url);
-  const data = await req.loadJSON();
-  if (data.error) throw new Error(data.error);
-  return data;
+ const base =
+   BASE_URL.replace(/\/+$/, '');
+ const url =
+   `${base}/api/dashboard-data` +
+   `?athleteId=${encodeURIComponent(ATHLETE_ID)}` +
+   `&forecastWeeks=1` +
+   `${TOKEN
+     ? `&token=${encodeURIComponent(TOKEN)}`
+     : ''}`;
+ const req =
+   new Request(url);
+ const data =
+   await req.loadJSON();
+ if (data.error) {
+   throw new Error(data.error);
+ }
+ return data;
 }
-
-const DAY_ABBR = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"];
-
+// =========================================================
+// DATES
+// =========================================================
+const DAY_ABBR = [
+ "Lun",
+ "Mar",
+ "Mer",
+ "Jeu",
+ "Ven",
+ "Sam",
+ "Dim"
+];
+function localISODate(
+ date = new Date()
+) {
+ const y =
+   date.getFullYear();
+ const m =
+   String(
+     date.getMonth() + 1
+   ).padStart(2, '0');
+ const d =
+   String(
+     date.getDate()
+   ).padStart(2, '0');
+ return `${y}-${m}-${d}`;
+}
+function getMondayISO(
+ date = new Date()
+) {
+ const d =
+   new Date(
+     date.getFullYear(),
+     date.getMonth(),
+     date.getDate()
+   );
+ const day =
+   d.getDay();
+ const diff =
+   day === 0
+     ? -6
+     : 1 - day;
+ d.setDate(
+   d.getDate() + diff
+ );
+ return localISODate(d);
+}
+function addDaysISO(
+ iso,
+ days
+) {
+ const [
+   y,
+   m,
+   d
+ ] =
+   iso
+     .split('-')
+     .map(Number);
+ const date =
+   new Date(
+     y,
+     m - 1,
+     d
+   );
+ date.setDate(
+   date.getDate() + days
+ );
+ return localISODate(date);
+}
 function dayAbbrFr(iso) {
-  const [y, m, d] = iso.split('-').map(Number);
-  const date = new Date(Date.UTC(y, m - 1, d));
-  const idx = (date.getUTCDay() + 6) % 7; // 0 = lundi
-  return DAY_ABBR[idx];
+ const [
+   y,
+   m,
+   d
+ ] =
+   iso
+     .split('-')
+     .map(Number);
+ const date =
+   new Date(
+     y,
+     m - 1,
+     d
+   );
+ const jsDay =
+   date.getDay();
+ const idx =
+   jsDay === 0
+     ? 6
+     : jsDay - 1;
+ return DAY_ABBR[idx];
 }
-
 function formatDayFr(iso) {
-  const [, m, d] = iso.split('-');
-  return `${d}/${m}`;
+ const [
+   ,
+   m,
+   d
+ ] =
+   iso.split('-');
+ return `${d}/${m}`;
 }
-
-// Emoji par sport (mêmes conventions que public/js/planning.js SPORT_ICONS/TYPE_MAP), pour
-// différencier les séances d'une même colonne/couleur de statut.
-const SPORT_TYPE_MAP = { WeightTraining: 'Strength', TrailRun: 'Run', VirtualRide: 'Ride', GravelRide: 'Ride', MountainBikeRide: 'Ride', OpenWaterSwim: 'Swim' };
-const SPORT_ICONS = { Run: "\uD83C\uDFC3", Ride: "\uD83D\uDEB4", Swim: "\uD83C\uDFCA", Strength: "\uD83C\uDFCB\uFE0F", Hike: "\uD83E\uDD7E", Walk: "\uD83D\uDEB6" };
+// =========================================================
+// SPORTS
+// =========================================================
+const SPORT_TYPE_MAP = {
+ WeightTraining:
+   'Strength',
+ TrailRun:
+   'Run',
+ VirtualRide:
+   'Ride',
+ GravelRide:
+   'Ride',
+ MountainBikeRide:
+   'Ride',
+ OpenWaterSwim:
+   'Swim'
+};
+const SPORT_ICONS = {
+ Run:
+   "\uD83C\uDFC3",
+ Ride:
+   "\uD83D\uDEB4",
+ Swim:
+   "\uD83C\uDFCA",
+ Strength:
+   "\uD83C\uDFCB\uFE0F",
+ Hike:
+   "\uD83E\uDD7E",
+ Walk:
+   "\uD83D\uDEB6"
+};
 function sportIcon(type) {
-  const t = SPORT_TYPE_MAP[type] || type;
-  return SPORT_ICONS[t] || "\uD83C\uDFBD";
+ const t =
+   SPORT_TYPE_MAP[type] ||
+   type;
+ return (
+   SPORT_ICONS[t] ||
+   "\uD83C\uDFBD"
+ );
 }
-
-// Icône + couleur selon l'état de la séance (réalisée / manquée / aujourd'hui / à venir / hors plan).
-function statusStyle(status) {
-  switch (status) {
-    case 'done':
-      return { icon: "✓", color: new Color("#35c46f") };
-    case 'extra':
-      return { icon: "+", color: new Color("#4a90d9") };
-    case 'missed':
-      return { icon: "✕", color: new Color("#ef5757") };
-    case 'today':
-      return { icon: "●", color: new Color("#f5a623") };
-    default:
-      return { icon: "○", color: new Color("#5a6480") };
-  }
+// =========================================================
+// DÉTECTION SÉANCE RÉALISÉE
+// =========================================================
+function isCompletedSession(s) {
+ if (s.done === true) {
+   return true;
+ }
+ if (s.completed === true) {
+   return true;
+ }
+ if (s.isCompleted === true) {
+   return true;
+ }
+ if (
+   s.status === 'done' ||
+   s.status === 'completed'
+ ) {
+   return true;
+ }
+ return false;
 }
-
-// Couleur du badge par jour/séance : vert réalisée, rouge manquée, orange aujourd'hui
-// (non réalisée), gris pour les prochains jours. Le sport, lui, est différencié par l'emoji.
-function statusColorHex(status) {
-  switch (status) {
-    case 'done':
-    case 'extra':
-      return "#35c46f";
-    case 'missed':
-      return "#ef5757";
-    case 'today':
-      return "#f5a623";
-    default:
-      return "#5a6480";
-  }
+// =========================================================
+// IDENTIFICATION DU SPORT
+// =========================================================
+function normalizedType(s) {
+ return (
+   s.type ||
+   s.activityType ||
+   s.sport ||
+   s.plannedType ||
+   ''
+ );
 }
-
-// "1h 05min" -> "1h05'", "45min" -> "45'" : compact pour tenir dans une colonne étroite.
+// =========================================================
+// FUSION DES SÉANCES
+// =========================================================
+function mergeSessions(
+ sessions
+) {
+ const result =
+   new Map();
+ for (
+   const s of sessions
+ ) {
+   if (!s.date) {
+     continue;
+   }
+   const name =
+     (
+       s.name ||
+       s.title ||
+       normalizedType(s) ||
+       ''
+     )
+       .toString()
+       .trim()
+       .toLowerCase();
+   const type =
+     normalizedType(s)
+       .toString()
+       .trim()
+       .toLowerCase();
+   const explicitId =
+     s.plannedId ||
+     s.planId ||
+     s.activityId ||
+     s.workoutId ||
+     null;
+   let key;
+   if (explicitId) {
+     key =
+       `id:${explicitId}`;
+   } else {
+     key =
+       `${s.date}|${name}|${type}`;
+   }
+   if (!result.has(key)) {
+     result.set(
+       key,
+       {
+         ...s
+       }
+     );
+     continue;
+   }
+   const existing =
+     result.get(key);
+   const currentDone =
+     isCompletedSession(s);
+   const existingDone =
+     isCompletedSession(
+       existing
+     );
+   if (
+     currentDone &&
+     !existingDone
+   ) {
+     result.set(
+       key,
+       {
+         ...existing,
+         ...s,
+         done: true
+       }
+     );
+   } else if (
+     currentDone &&
+     existingDone
+   ) {
+     result.set(
+       key,
+       {
+         ...existing,
+         ...s,
+         done: true
+       }
+     );
+   }
+ }
+ return [
+   ...result.values()
+ ];
+}
+// =========================================================
+// FUSION PLUS AGRESSIVE PAR JOUR
+// =========================================================
+function mergePlannedAndCompleted(
+ sessions
+) {
+ const completed =
+   sessions.filter(
+     isCompletedSession
+   );
+ const planned =
+   sessions.filter(
+     s =>
+       !isCompletedSession(s)
+   );
+ const usedCompleted =
+   new Set();
+ const result = [];
+ for (
+   const p of planned
+ ) {
+   let matchIndex = -1;
+   // 1. Même jour + même nom
+   for (
+     let i = 0;
+     i < completed.length;
+     i++
+   ) {
+     if (
+       usedCompleted.has(i)
+     ) {
+       continue;
+     }
+     const c =
+       completed[i];
+     if (
+       c.date === p.date &&
+       (
+         (
+           c.name &&
+           p.name &&
+           c.name === p.name
+         ) ||
+         (
+           c.title &&
+           p.title &&
+           c.title === p.title
+         )
+       )
+     ) {
+       matchIndex = i;
+       break;
+     }
+   }
+   // 2. Même jour + type similaire
+   if (
+     matchIndex === -1
+   ) {
+     for (
+       let i = 0;
+       i < completed.length;
+       i++
+     ) {
+       if (
+         usedCompleted.has(i)
+       ) {
+         continue;
+       }
+       const c =
+         completed[i];
+       if (
+         c.date === p.date &&
+         normalizedType(c) ===
+         normalizedType(p)
+       ) {
+         matchIndex = i;
+         break;
+       }
+     }
+   }
+   // 3. Même jour + une seule séance réalisée
+   if (
+     matchIndex === -1
+   ) {
+     const candidates =
+       completed
+         .map(
+           (c, i) => ({
+             c,
+             i
+           })
+         )
+         .filter(
+           ({ c, i }) =>
+             c.date === p.date &&
+             !usedCompleted.has(i)
+         );
+     if (
+       candidates.length === 1
+     ) {
+       matchIndex =
+         candidates[0].i;
+     }
+   }
+   if (
+     matchIndex !== -1
+   ) {
+     const c =
+       completed[
+         matchIndex
+       ];
+     usedCompleted.add(
+       matchIndex
+     );
+     result.push({
+       ...p,
+       ...c,
+       done: true,
+       plannedTime:
+         p.plannedTime ??
+         c.plannedTime,
+       plannedLoad:
+         p.plannedLoad ??
+         c.plannedLoad,
+       realTime:
+         c.realTime ??
+         c.duration ??
+         p.realTime,
+       realLoad:
+         c.realLoad ??
+         c.load ??
+         p.realLoad
+     });
+   } else {
+     result.push(p);
+   }
+ }
+ completed.forEach(
+   (c, i) => {
+     if (
+       !usedCompleted.has(i)
+     ) {
+       result.push(c);
+     }
+   }
+ );
+ return result;
+}
+// =========================================================
+// STATUT
+// =========================================================
+function getSessionStatus(
+ session
+) {
+ if (
+   isCompletedSession(
+     session
+   )
+ ) {
+   return 'done';
+ }
+ if (
+   session.status
+ ) {
+   return session.status;
+ }
+ return 'planned';
+}
+function statusStyle(
+ status
+) {
+ switch (status) {
+   case 'done':
+     return {
+       icon: "✓",
+       color:
+         new Color(
+           "#35c46f"
+         )
+     };
+   case 'extra':
+     return {
+       icon: "+",
+       color:
+         new Color(
+           "#4a90d9"
+         )
+     };
+   case 'missed':
+     return {
+       icon: "✕",
+       color:
+         new Color(
+           "#ef5757"
+         )
+     };
+   case 'today':
+     return {
+       icon: "●",
+       color:
+         new Color(
+           "#f5a623"
+         )
+     };
+   default:
+     return {
+       icon: "○",
+       color:
+         new Color(
+           "#5a6480"
+         )
+     };
+ }
+}
+function statusColorHex(
+ status
+) {
+ switch (status) {
+   case 'done':
+   case 'extra':
+     return "#35c46f";
+   case 'missed':
+     return "#ef5757";
+   case 'today':
+     return "#f5a623";
+   default:
+     return "#5a6480";
+ }
+}
+// =========================================================
+// DURÉE
+// =========================================================
 function shortDuration(t) {
-  if (!t) return '';
-  return t.replace(' ', '').replace('min', "'");
+ if (!t) {
+   return '';
+ }
+ return t
+   .replace(' ', '')
+   .replace('min', "'");
 }
-
-function addWeekColumns(w, days, today, width) {
-  const gap = 3;
-  const colWidth = (width - gap * 6) / 7;
-  const row = w.addStack();
-  row.layoutHorizontally();
-  row.spacing = gap;
-
-  days.forEach(([date, sessions]) => {
-    const col = row.addStack();
-    col.layoutVertically();
-    col.size = new Size(colWidth, 0);
-    col.centerAlignContent();
-
-    const dayLabel = col.addText(dayAbbrFr(date));
-    dayLabel.font = Font.mediumSystemFont(8);
-    dayLabel.textColor = date === today ? new Color("#f5a623") : new Color("#9aa7c2");
-    dayLabel.centerAlignText();
-    col.addSpacer(2);
-
-    if (!sessions.length) {
-      const rest = col.addText("–");
-      rest.font = Font.systemFont(10);
-      rest.textColor = new Color("#4a5068");
-      rest.centerAlignText();
-    } else {
-      sessions.forEach((s, i) => {
-        if (i > 0) col.addSpacer(6);
-        const badge = col.addStack();
-        badge.size = new Size(15, 15);
-        badge.backgroundColor = new Color(statusColorHex(s.status));
-        badge.cornerRadius = 7.5;
-        badge.centerAlignContent();
-        const icon = badge.addText(sportIcon(s.type));
-        icon.font = Font.systemFont(8);
-        icon.centerAlignText();
-
-        col.addSpacer(2);
-
-        // Durée + charge sur une seule ligne compacte, sinon 2-3 séances dans une colonne
-        // dépassent la hauteur du widget medium.
-        const time = s.done ? s.realTime : s.plannedTime;
-        const load = s.done ? s.realLoad : s.plannedLoad;
-        const infoText = col.addText([shortDuration(time), load != null ? `${load}` : null].filter(Boolean).join(' · '));
-        infoText.font = Font.systemFont(7);
-        infoText.textColor = new Color("#8b96b3");
-        infoText.centerAlignText();
-      });
-    }
-  });
+// =========================================================
+// GROUPEMENT PAR JOUR
+// =========================================================
+function groupByDay(
+ sessions,
+ weekStart
+) {
+ const byDate =
+   new Map();
+ for (
+   let i = 0;
+   i < 7;
+   i++
+ ) {
+   const iso =
+     addDaysISO(
+       weekStart,
+       i
+     );
+   byDate.set(
+     iso,
+     []
+   );
+ }
+ for (
+   const s of sessions
+ ) {
+   if (
+     byDate.has(s.date)
+   ) {
+     byDate
+       .get(s.date)
+       .push(s);
+   }
+ }
+ return [
+   ...byDate.entries()
+ ];
 }
-
-function groupByDay(sessions, weekStart) {
-  const byDate = new Map();
-  for (let i = 0; i < 7; i++) {
-    const date = new Date(Date.UTC(...weekStart.split('-').map(Number)));
-    date.setUTCDate(date.getUTCDate() + i);
-    const iso = date.toISOString().slice(0, 10);
-    byDate.set(iso, []);
-  }
-  for (const s of sessions) {
-    if (!byDate.has(s.date)) byDate.set(s.date, []);
-    byDate.get(s.date).push(s);
-  }
-  return [...byDate.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+// =========================================================
+// BARRE DE PROGRESSION
+// =========================================================
+//
+// Barre simple avec remplissage depuis la gauche.
+//
+// ratio = valeur / valeurMax
+//
+// =========================================================
+function addProgressBar(
+ w,
+ value,
+ maxValue,
+ width,
+ height,
+ colorHex
+) {
+ const ratio =
+   maxValue > 0
+     ? Math.max(
+         0,
+         Math.min(
+           1,
+           value /
+             maxValue
+         )
+       )
+     : 0;
+ const container =
+   w.addStack();
+ container
+   .layoutHorizontally();
+ container.addSpacer();
+ const bar =
+   container.addStack();
+ bar.size =
+   new Size(
+     width,
+     height
+   );
+ bar.backgroundColor =
+   new Color(
+     "#2a3142"
+   );
+ bar.cornerRadius =
+   height / 2;
+ bar.layoutHorizontally();
+ const fillWidth =
+   width * ratio;
+ if (
+   fillWidth > 0
+ ) {
+   const fill =
+     bar.addStack();
+   fill.size =
+     new Size(
+       fillWidth,
+       height
+     );
+   fill.backgroundColor =
+     new Color(
+       colorHex
+     );
+   fill.cornerRadius =
+     height / 2;
+ }
+ bar.addSpacer();
+ container.addSpacer();
 }
-
-function addProgressBar(w, ratio, width, height, color) {
-  const stack = w.addStack();
-  stack.size = new Size(width, height);
-  stack.backgroundColor = new Color("#2a3142");
-  stack.cornerRadius = height / 2;
-  const fillWidth = Math.max(0, Math.min(width, width * ratio));
-  if (fillWidth > 0) {
-    const fill = stack.addStack();
-    fill.size = new Size(fillWidth, height);
-    fill.backgroundColor = color;
-    fill.cornerRadius = height / 2;
-  }
-  return stack;
+// =========================================================
+// DOUBLE BARRE
+// =========================================================
+//
+// Ligne 1 : réalisé
+// Ligne 2 : planifié à date
+//
+// La deuxième barre utilise exactement la couleur
+// des séances du jour non réalisées : #f5a623.
+//
+// =========================================================
+function addDoubleProgressBars(
+ w,
+ realLoad,
+ plannedTotal,
+ plannedToDate,
+ width,
+ height
+) {
+ // -------------------------------------------------------
+ // Barre réalisée
+ // -------------------------------------------------------
+ addProgressBar(
+   w,
+   realLoad,
+   plannedTotal,
+   width,
+   height,
+   "#35c46f"
+ );
+ // Petit espace entre les deux barres
+ w.addSpacer(2);
+ // -------------------------------------------------------
+ // Barre planifiée à date
+ // -------------------------------------------------------
+ addProgressBar(
+   w,
+   plannedToDate,
+   plannedTotal,
+   width,
+   height,
+   "#f5a623"
+ );
 }
-
-function addSessionRow(w, session, showName) {
-  const row = w.addStack();
-  row.centerAlignContent();
-  row.spacing = 6;
-
-  const style = statusStyle(session.status);
-  const dayText = row.addText(dayAbbrFr(session.date));
-  dayText.font = Font.mediumSystemFont(11);
-  dayText.textColor = new Color("#9aa7c2");
-  dayText.leftAlignText();
-
-  const icon = row.addText(style.icon);
-  icon.font = Font.boldSystemFont(11);
-  icon.textColor = style.color;
-
-  if (showName) {
-    const name = row.addText(session.name || session.type || 'Séance');
-    name.font = Font.systemFont(11);
-    name.textColor = Color.white();
-    name.lineLimit = 1;
-    row.addSpacer();
-  } else {
-    row.addSpacer();
-  }
-
-  const load = session.done ? session.realLoad : session.plannedLoad;
-  const loadText = row.addText(load != null ? `${load}` : "—");
-  loadText.font = Font.systemFont(11);
-  loadText.textColor = new Color("#6b7690");
+// =========================================================
+// CALCUL DE LA CHARGE PLANIFIÉE À DATE
+// =========================================================
+//
+// On additionne les charges planifiées des séances
+// jusqu'à aujourd'hui inclus.
+//
+// Cela permet de comparer :
+//
+//   charge réellement réalisée
+//             VS
+//   charge qui aurait dû être réalisée à ce stade
+//
+// IMPORTANT :
+// Les séances futures ne sont pas comptées dans
+// plannedToDate.
+//
+// =========================================================
+function calculatePlannedToDate(
+ sessions,
+ today
+) {
+ let total = 0;
+ for (
+   const s of sessions
+ ) {
+   if (
+     !s.date ||
+     s.date > today
+   ) {
+     continue;
+   }
+   const load =
+     Number(
+       s.plannedLoad
+     );
+   if (
+     Number.isFinite(load)
+   ) {
+     total += load;
+   }
+ }
+ return total;
 }
-
+// =========================================================
+// COLONNES SEMAINE
+// =========================================================
+function addWeekColumns(
+ w,
+ days,
+ today,
+ width
+) {
+ const gap = 6;
+ const colWidth =
+   (
+     width -
+     gap * 6
+   ) / 7;
+ const row =
+   w.addStack();
+ row.layoutHorizontally();
+ row.spacing =
+   gap;
+ row.centerAlignContent();
+ row.addSpacer();
+ days.forEach(
+   ([date, sessions]) => {
+     const col =
+       row.addStack();
+     col.layoutVertically();
+     col.size =
+       new Size(
+         colWidth,
+         0
+       );
+     col.centerAlignContent();
+     // ---------------------------------------------------
+     // Jour
+     // ---------------------------------------------------
+     const dayLabel =
+       col.addText(
+         dayAbbrFr(date)
+       );
+     dayLabel.font =
+       Font.semiboldSystemFont(
+         8.5
+       );
+     dayLabel.textColor =
+       date === today
+         ? new Color(
+             "#f5a623"
+           )
+         : new Color(
+             "#9aa7c2"
+           );
+     dayLabel.centerAlignText();
+     col.addSpacer(3);
+     // ---------------------------------------------------
+     // Repos
+     // ---------------------------------------------------
+     if (
+       !sessions.length
+     ) {
+       const rest =
+         col.addText(
+           "–"
+         );
+       rest.font =
+         Font.systemFont(
+           11
+         );
+       rest.textColor =
+         new Color(
+           "#4a5068"
+         );
+       rest.centerAlignText();
+       return;
+     }
+     // ---------------------------------------------------
+     // Séances
+     // ---------------------------------------------------
+     sessions.forEach(
+       (s, i) => {
+         if (
+           i > 0
+         ) {
+           col.addSpacer(
+             4
+           );
+         }
+         const status =
+           getSessionStatus(
+             s
+           );
+         const badge =
+           col.addStack();
+         badge.size =
+           new Size(
+             21,
+             21
+           );
+         badge.backgroundColor =
+           new Color(
+             statusColorHex(
+               status
+             )
+           );
+         badge.cornerRadius =
+           10.5;
+         badge.centerAlignContent();
+         const icon =
+           badge.addText(
+             sportIcon(
+               normalizedType(s)
+             )
+           );
+         icon.font =
+           Font.systemFont(
+             11.5
+           );
+         icon.centerAlignText();
+         // ------------------------------------------------
+         // Durée + charge
+         // ------------------------------------------------
+         const time =
+           s.done
+             ? (
+                 s.realTime ??
+                 s.actualTime
+               )
+             : s.plannedTime;
+         const load =
+           s.done
+             ? (
+                 s.realLoad ??
+                 s.actualLoad
+               )
+             : s.plannedLoad;
+         const info =
+           [
+             shortDuration(
+               time
+             ),
+             load != null
+               ? `${load}`
+               : null
+           ]
+             .filter(Boolean)
+             .join(
+               ' · '
+             );
+         if (
+           info
+         ) {
+           col.addSpacer(
+             1
+           );
+           const infoText =
+             col.addText(
+               info
+             );
+           infoText.font =
+             Font.systemFont(
+               7.5
+             );
+           infoText.textColor =
+             new Color(
+               "#8b96b3"
+             );
+           infoText.centerAlignText();
+           infoText.minimumScaleFactor =
+             0.6;
+         }
+       }
+     );
+   }
+ );
+ row.addSpacer();
+}
+// =========================================================
+// LIGNE POUR SMALL / LARGE
+// =========================================================
+function addSessionRow(
+ w,
+ session,
+ showName
+) {
+ const row =
+   w.addStack();
+ row.centerAlignContent();
+ row.spacing =
+   6;
+ const status =
+   getSessionStatus(
+     session
+   );
+ const style =
+   statusStyle(
+     status
+   );
+ const dayText =
+   row.addText(
+     dayAbbrFr(
+       session.date
+     )
+   );
+ dayText.font =
+   Font.mediumSystemFont(
+     11
+   );
+ dayText.textColor =
+   new Color(
+     "#9aa7c2"
+   );
+ const icon =
+   row.addText(
+     style.icon
+   );
+ icon.font =
+   Font.boldSystemFont(
+     11
+   );
+ icon.textColor =
+   style.color;
+ if (
+   showName
+ ) {
+   const name =
+     row.addText(
+       session.name ||
+       session.type ||
+       'Séance'
+     );
+   name.font =
+     Font.systemFont(
+       11
+     );
+   name.textColor =
+     Color.white();
+   name.lineLimit =
+     1;
+   row.addSpacer();
+ } else {
+   row.addSpacer();
+ }
+ const load =
+   session.done
+     ? session.realLoad
+     : session.plannedLoad;
+ const loadText =
+   row.addText(
+     load != null
+       ? `${load}`
+       : "—"
+   );
+ loadText.font =
+   Font.systemFont(
+     11
+   );
+ loadText.textColor =
+   new Color(
+     "#6b7690"
+   );
+}
+// =========================================================
+// CRÉATION DU WIDGET
+// =========================================================
 async function createWidget() {
-  const w = new ListWidget();
-  w.backgroundColor = new Color("#151a24");
-  w.setPadding(10, 12, 10, 12);
-
-  try {
-    const data = await fetchDashboardData();
-    const cw = data.currentWeekSessions;
-    const family = config.widgetFamily || 'medium';
-
-    if (!cw || !cw.sessions) {
-      const empty = w.addText("Aucune séance cette semaine.");
-      empty.font = Font.systemFont(13);
-      empty.textColor = Color.gray();
-      return w;
-    }
-
-    const { totals } = cw;
-    const ratio = totals.plannedLoad > 0 ? totals.realLoad / totals.plannedLoad : 0;
-
-    const header = w.addStack();
-    header.centerAlignContent();
-    const title = header.addText("Semaine");
-    title.font = Font.semiboldSystemFont(13);
-    title.textColor = new Color("#9aa7c2");
-    header.addSpacer();
-    const count = header.addText(`${totals.doneCount}/${totals.plannedCount}`);
-    count.font = Font.boldSystemFont(family === 'small' ? 16 : 20);
-    count.textColor = ratio >= 1 ? new Color("#35c46f") : new Color("#f5a623");
-
-    w.addSpacer(3);
-    addProgressBar(w, ratio, family === 'small' ? 126 : family === 'large' ? 276 : 276, 6, new Color("#35c46f"));
-    w.addSpacer(2);
-    const loadCaption = w.addText(`Charge : ${totals.realLoad} / ${totals.plannedLoad}`);
-    loadCaption.font = Font.systemFont(9);
-    loadCaption.textColor = new Color("#6b7690");
-
-    w.addSpacer(family === 'medium' ? 5 : 8);
-
-    if (family === 'small') {
-      // Espace restreint : uniquement les séances du jour même.
-      const todaySessions = cw.sessions.filter((s) => s.date === cw.today);
-      if (!todaySessions.length) {
-        const rest = w.addText("Repos aujourd'hui");
-        rest.font = Font.systemFont(11);
-        rest.textColor = new Color("#6b7690");
-      } else {
-        todaySessions.forEach((s) => addSessionRow(w, s, true));
-      }
-    } else if (family === 'medium') {
-      // Une colonne par jour (lundi -> dimanche), une pastille par séance du jour (2-3 possibles).
-      const days = groupByDay(cw.sessions, cw.weekStart);
-      addWeekColumns(w, days, cw.today, 276);
-    } else {
-      const days = groupByDay(cw.sessions, cw.weekStart);
-
-      days.forEach(([date, sessions]) => {
-        if (!sessions.length) {
-          const row = w.addStack();
-          row.centerAlignContent();
-          const dayText = row.addText(`${dayAbbrFr(date)} ${formatDayFr(date)}`);
-          dayText.font = Font.mediumSystemFont(11);
-          dayText.textColor = new Color("#4a5068");
-          row.addSpacer();
-          const rest = row.addText("repos");
-          rest.font = Font.systemFont(10);
-          rest.textColor = new Color("#4a5068");
-        } else {
-          sessions.forEach((s) => addSessionRow(w, s, true));
-        }
-      });
-    }
-  } catch (e) {
-    const err = w.addText(`Erreur: ${e.message}`);
-    err.font = Font.systemFont(12);
-    err.textColor = Color.red();
-  }
-
-  return w;
+ const w =
+   new ListWidget();
+ w.backgroundColor =
+   new Color(
+     "#151a24"
+   );
+ w.setPadding(
+   10,
+   12,
+   10,
+   12
+ );
+ try {
+   // -----------------------------------------------------
+   // API
+   // -----------------------------------------------------
+   const data =
+     await fetchDashboardData();
+   const cw =
+     data.currentWeekSessions;
+   const family =
+     config.widgetFamily ||
+     'medium';
+   if (
+     !cw ||
+     !cw.sessions
+   ) {
+     const empty =
+       w.addText(
+         "Aucune séance cette semaine."
+       );
+     empty.font =
+       Font.systemFont(
+         13
+       );
+     empty.textColor =
+       Color.gray();
+     return w;
+   }
+   // -----------------------------------------------------
+   // DATES
+   // -----------------------------------------------------
+   const now =
+     new Date();
+   const today =
+     localISODate(
+       now
+     );
+   const weekStart =
+     getMondayISO(
+       now
+     );
+   // -----------------------------------------------------
+   // FUSION DES SÉANCES
+   // -----------------------------------------------------
+   let sessions =
+     mergeSessions(
+       cw.sessions
+     );
+   sessions =
+     mergePlannedAndCompleted(
+       sessions
+     );
+   // -----------------------------------------------------
+   // JOURS
+   // -----------------------------------------------------
+   const days =
+     groupByDay(
+       sessions,
+       weekStart
+     );
+   // -----------------------------------------------------
+   // CHARGES
+   // -----------------------------------------------------
+   const totals =
+     cw.totals;
+   const plannedLoad =
+     Number(
+       totals.plannedLoad
+     ) || 0;
+   const realLoad =
+     Number(
+       totals.realLoad
+     ) || 0;
+   // -----------------------------------------------------
+   // CHARGE PLANIFIÉE À DATE
+   // -----------------------------------------------------
+   //
+   // Toutes les séances planifiées jusqu'à aujourd'hui
+   // inclus sont additionnées.
+   //
+   // Les séances réalisées fusionnées conservent leur
+   // plannedLoad grâce au merge précédent.
+   //
+   const plannedToDate =
+     calculatePlannedToDate(
+       sessions,
+       today
+     );
+   // -----------------------------------------------------
+   // ÉCART À DATE
+   // -----------------------------------------------------
+   const loadGap =
+     realLoad -
+     plannedToDate;
+   // -----------------------------------------------------
+   // RATIO GLOBAL
+   // -----------------------------------------------------
+   const ratio =
+     plannedLoad > 0
+       ? realLoad /
+         plannedLoad
+       : 0;
+   // -----------------------------------------------------
+   // HEADER
+   // -----------------------------------------------------
+   const header =
+     w.addStack();
+   header.centerAlignContent();
+   const title =
+     header.addText(
+       "Planning"
+     );
+   title.font =
+     Font.semiboldSystemFont(
+       13
+     );
+   title.textColor =
+     new Color(
+       "#9aa7c2"
+     );
+   header.addSpacer();
+   const count =
+     header.addText(
+       `${totals.doneCount}/${totals.plannedCount}`
+     );
+   count.font =
+     Font.boldSystemFont(
+       family === 'small'
+         ? 16
+         : 20
+     );
+   count.textColor =
+     ratio >= 1
+       ? new Color(
+           "#35c46f"
+         )
+       : new Color(
+           "#f5a623"
+         );
+   // -----------------------------------------------------
+   // CHARGE
+   // -----------------------------------------------------
+   w.addSpacer(4);
+   const loadRow =
+     w.addStack();
+   loadRow.centerAlignContent();
+   const loadCaption =
+     loadRow.addText(
+       `Charge : ${realLoad} / ${plannedLoad}`
+     );
+   loadCaption.font =
+     Font.systemFont(
+       9
+     );
+   loadCaption.textColor =
+     new Color(
+       "#6b7690"
+     );
+   loadRow.addSpacer();
+   // -----------------------------------------------------
+   // INDICATEUR AVANCE / RETARD
+   // -----------------------------------------------------
+   const gapText =
+     loadGap >= 0
+       ? `+${Math.round(loadGap)}`
+       : `${Math.round(loadGap)}`;
+   const gapLabel =
+     loadRow.addText(
+       gapText
+     );
+   gapLabel.font =
+     Font.boldSystemFont(
+       9
+     );
+   gapLabel.textColor =
+     loadGap >= 0
+       ? new Color(
+           "#35c46f"
+         )
+       : new Color(
+           "#f5a623"
+         );
+   // -----------------------------------------------------
+   // DOUBLE BARRE
+   // -----------------------------------------------------
+   w.addSpacer(2);
+   addDoubleProgressBars(
+     w,
+     realLoad,
+     plannedLoad,
+     plannedToDate,
+     family === 'small'
+       ? 126
+       : 284,
+     7
+   );
+   // -----------------------------------------------------
+   // SMALL
+   // -----------------------------------------------------
+   if (
+     family === 'small'
+   ) {
+     w.addSpacer(7);
+     const todaySessions =
+       sessions.filter(
+         s =>
+           s.date === today
+       );
+     if (
+       !todaySessions.length
+     ) {
+       const rest =
+         w.addText(
+           "Repos aujourd'hui"
+         );
+       rest.font =
+         Font.systemFont(
+           11
+         );
+       rest.textColor =
+         new Color(
+           "#6b7690"
+         );
+     } else {
+       todaySessions.forEach(
+         s =>
+           addSessionRow(
+             w,
+             s,
+             true
+           )
+       );
+     }
+   // -----------------------------------------------------
+   // MEDIUM
+   // -----------------------------------------------------
+   } else if (
+     family === 'medium'
+   ) {
+     w.addSpacer(5);
+     const weekContainer =
+       w.addStack();
+     weekContainer
+       .layoutHorizontally();
+     weekContainer
+       .centerAlignContent();
+     weekContainer.addSpacer();
+     addWeekColumns(
+       weekContainer,
+       days,
+       today,
+       284
+     );
+     weekContainer.addSpacer();
+   // -----------------------------------------------------
+   // LARGE
+   // -----------------------------------------------------
+   } else {
+     w.addSpacer(6);
+     days.forEach(
+       ([date, sessions]) => {
+         if (
+           !sessions.length
+         ) {
+           const row =
+             w.addStack();
+           row.centerAlignContent();
+           const dayText =
+             row.addText(
+               `${dayAbbrFr(date)} ${formatDayFr(date)}`
+             );
+           dayText.font =
+             Font.mediumSystemFont(
+               11
+             );
+           dayText.textColor =
+             new Color(
+               "#4a5068"
+             );
+           row.addSpacer();
+           const rest =
+             row.addText(
+               "repos"
+             );
+           rest.font =
+             Font.systemFont(
+               10
+             );
+           rest.textColor =
+             new Color(
+               "#4a5068"
+             );
+         } else {
+           sessions.forEach(
+             s =>
+               addSessionRow(
+                 w,
+                 s,
+                 true
+               )
+           );
+         }
+       }
+     );
+   }
+ } catch (e) {
+   const err =
+     w.addText(
+       `Erreur: ${e.message}`
+     );
+   err.font =
+     Font.systemFont(
+       12
+     );
+   err.textColor =
+     Color.red();
+ }
+ return w;
 }
-
-const widget = await createWidget();
-if (config.runsInWidget) {
-  Script.setWidget(widget);
+// =========================================================
+// LANCEMENT
+// =========================================================
+const widget =
+ await createWidget();
+if (
+ config.runsInWidget
+) {
+ Script.setWidget(
+   widget
+ );
 } else {
-  await widget.presentMedium();
+ await widget.presentMedium();
 }
 Script.complete();

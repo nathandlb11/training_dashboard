@@ -324,7 +324,10 @@ async function buildDashboardData({
   let forecastError = null;
   let futureRaw = [];
   try {
-    const forecastEnd = addDaysIso(todayIso(), forecastWeeks * 7);
+    // Aligné sur le lundi de la semaine en cours : sinon, quand "aujourd'hui" n'est pas un lundi,
+    // la dernière semaine de projection est coupée en milieu de semaine et les séances planifiées
+    // en fin de semaine (jeudi-dimanche) sont exclues du fetch -> semaine sous-estimée (km/D+/heures/ACWR).
+    const forecastEnd = addDaysIso(weekStartMonday(todayIso()), forecastWeeks * 7 - 1);
     futureRaw = await fetchCalendarEvents(apiKey, historyStart, forecastEnd, athleteId);
     forecast = buildForecast(futureRaw);
   } catch (e) {

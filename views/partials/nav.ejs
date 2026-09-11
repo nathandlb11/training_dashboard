@@ -5,5 +5,10 @@
       <a href="/dashboard" class="tab <%= currentPath === '/dashboard' ? 'active' : '' %>">📊 Dashboard</a>
       <a href="/planning" class="tab <%= currentPath === '/planning' ? 'active' : '' %>">🗓️ Planification &amp; envoi</a>
     </nav>
+    <% if (typeof dashboardAuthEnabled !== 'undefined' && dashboardAuthEnabled) { %>
+      <form method="POST" action="/logout" style="margin:0;">
+        <button type="submit" class="btn-ghost">Déconnexion</button>
+      </form>
+    <% } %>
   </div>
 </header>

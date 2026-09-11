@@ -92,7 +92,7 @@ h2, .subheader { font-size: 1.15rem; margin: 32px 0 12px; color: var(--text); }
 }
 .field { display: flex; flex-direction: column; gap: 5px; min-width: 150px; }
 .field label { font-size: 0.78rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.03em; }
-.field select, .field input[type="date"], .field input[type="number"], .field input[type="text"], textarea, select {
+.field select, .field input[type="date"], .field input[type="number"], .field input[type="text"], .field input[type="password"], textarea, select {
   background: var(--panel-2);
   border: 1px solid var(--border);
   color: var(--text);

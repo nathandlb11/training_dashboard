@@ -66,6 +66,26 @@ AI_PROVIDER=groq
 GROQ_API_KEY=gsk_...
 ```
 
+## Sécuriser l'accès
+
+Par défaut, les pages `/dashboard` et `/planning` sont accessibles à
+quiconque connaît l'URL. Pour exiger une connexion (page `/login`),
+renseigne dans `.env` :
+```
+DASHBOARD_USER=...
+DASHBOARD_PASS=...
+```
+Une fois connecté, un cookie de session signé (HMAC, `DASHBOARD_SESSION_SECRET`
+optionnel) garde l'accès pendant 30 jours ; un bouton « Déconnexion » apparaît
+dans la barre de navigation. Si l'une des deux variables est absente, aucune
+authentification n'est demandée (comportement inchangé). Les identifiants ne
+sont jamais envoyés au navigateur ; en local, place-les dans `.env` (non
+commité) ; sur Vercel, dans les variables d'environnement du projet.
+
+Les endpoints utilisés par les widgets iOS (`/api/dashboard-data` via
+`WIDGET_TOKEN`) ne sont pas concernés par cette protection : ils continuent de
+fonctionner indépendamment via leur propre token en query string.
+
 ## Structure du projet
 
 ```

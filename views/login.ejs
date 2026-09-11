@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <%- include('partials/head', { pageTitle: 'Connexion — Training Dashboard' }) %>
+</head>
+<body>
+  <main style="max-width:380px; margin:80px auto 0;">
+    <div class="card">
+      <h1 style="font-size:1.25rem;">🔒 Connexion</h1>
+      <p class="caption">Accès au Training Load Dashboard</p>
+
+      <% if (error) { %>
+        <div class="alert alert-error"><%= error %></div>
+      <% } %>
+
+      <form method="POST" action="/login" style="display:flex; flex-direction:column; gap:14px;">
+        <input type="hidden" name="next" value="<%= next %>" />
+        <div class="field">
+          <label for="username">Utilisateur</label>
+          <input type="text" id="username" name="username" autocomplete="username" required autofocus style="width:100%;" />
+        </div>
+        <div class="field">
+          <label for="password">Mot de passe</label>
+          <input type="password" id="password" name="password" autocomplete="current-password" required style="width:100%;" />
+        </div>
+        <button type="submit">Se connecter</button>
+      </form>
+    </div>
+  </main>
+</body>
+</html>
