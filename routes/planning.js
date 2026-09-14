@@ -5,10 +5,9 @@ const {
   createOrUpdateCalendarEvents,
   updateCalendarEvent,
   deleteCalendarEvent,
-  fetchWorkoutLibrary,
 } = require('../src/intervalsApi');
 const { getAthleteOptions } = require('../src/athletes');
-const { getChronicLoad, getPlannedCalendar } = require('../src/planningData');
+const { getChronicLoad, getPlannedCalendar, getWorkoutLibrary } = require('../src/planningData');
 const { SESSION_LIBRARY } = require('../src/sessionLibrary');
 const { generateAiWeekPlan } = require('../src/aiPlanner');
 const { addDaysIso, todayIso } = require('../src/dateUtils');
@@ -106,9 +105,10 @@ router.get('/api/planning/workouts', async (req, res) => {
   if (!apiKey) return res.status(400).json({ error: 'Clé API Intervals.icu manquante.' });
 
   try {
-    const { athleteId = '0' } = req.query;
-    const workouts = await fetchWorkoutLibrary(apiKey, athleteId);
-    res.json({ workouts });
+    // Toujours le compte principal (voir getWorkoutLibrary) : la bibliothèque ne dépend pas de
+    // l'athlète sélectionné dans l'UI.
+    const { workouts, folders } = await getWorkoutLibrary(apiKey);
+    res.json({ workouts, folders });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

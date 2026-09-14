@@ -150,6 +150,18 @@ async function fetchWorkoutLibrary(apiKey, athleteId = '0') {
   return workouts;
 }
 
+/** Récupère l'arborescence des dossiers de la bibliothèque de séances Intervals.icu. */
+async function fetchWorkoutFolders(apiKey, athleteId = '0') {
+  const cacheKey = ['workout-folders', apiKey, athleteId];
+  const cached = cache.get(cacheKey);
+  if (cached !== undefined) return cached;
+
+  const result = await intervalsApiRequest('GET', `/athlete/${athleteId}/folders`, apiKey);
+  const folders = Array.isArray(result) ? result : [];
+  cache.set(cacheKey, folders);
+  return folders;
+}
+
 module.exports = {
   intervalsApiRequest,
   fetchAthleteSummary,
@@ -158,5 +170,6 @@ module.exports = {
   createOrUpdateCalendarEvents,
   updateCalendarEvent,
   deleteCalendarEvent,
+  fetchWorkoutFolders,
   fetchWorkoutLibrary,
 };

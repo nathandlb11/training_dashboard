@@ -7,24 +7,6 @@
   <%- include('partials/nav') %>
 
   <main class="planning-page">
-    <div class="planning-topbar">
-      <div class="planning-topbar-left">
-        <h1 style="margin:0;font-size:1.3rem;">🗓️ Planification</h1>
-      </div>
-      <div class="planning-topbar-right">
-        <% if (!apiKeyMissing) { %>
-          <div class="field" style="min-width:200px;">
-            <label for="athleteSelect">Athlète</label>
-            <select id="athleteSelect">
-              <% athletes.forEach(a => { %>
-                <option value="<%= a.id %>" <%= a.id === athleteId ? 'selected' : '' %>><%= a.label %></option>
-              <% }) %>
-            </select>
-          </div>
-        <% } %>
-      </div>
-    </div>
-
     <% if (apiKeyMissing) { %>
       <div class="alert alert-info" style="margin-top:20px;">
         Renseigne <code>INTERVALS_API_KEY</code> dans le fichier <code>.env</code> à la racine du projet, puis redémarre le serveur.
@@ -42,12 +24,10 @@
             <input type="text" id="librarySearch" placeholder="Rechercher…" autocomplete="off" />
           </div>
 
-          <div class="sport-filter" id="sportFilter">
-            <button class="sport-pill active" data-sport="">Tous</button>
-            <button class="sport-pill" data-sport="Run">Run</button>
-            <button class="sport-pill" data-sport="Ride">Vélo</button>
-            <button class="sport-pill" data-sport="Strength">Muscu</button>
-            <button class="sport-pill" data-sport="Swim">Nage</button>
+          <div class="field" style="margin:0 12px 8px;">
+            <select id="folderFilter">
+              <option value="">Tous les dossiers</option>
+            </select>
           </div>
 
           <div id="tabIntervals" class="lib-tab-content">
@@ -77,18 +57,15 @@
             </div>
           </div>
 
-          <div class="card" style="padding:16px 18px;margin-bottom:14px;">
-            <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
-              <h3 style="margin:0;font-size:1rem;">Charge hebdo Foster &amp; ACWR</h3>
-              <div style="display:flex;align-items:center;gap:6px;">
-                <label for="nWeeks" class="caption" style="margin:0;">Horizon</label>
-                <input type="number" id="nWeeks" min="2" max="16" value="8" style="width:60px;" />
-                <span class="caption">semaines</span>
+          <div class="pmc-sticky-wrap" id="pmcStickyWrap">
+            <div class="card" style="padding:16px 18px;margin-bottom:0;">
+              <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+                <h3 style="margin:0;font-size:1rem;">Charge hebdo Foster &amp; ACWR</h3>
               </div>
+              <div class="chart-wrap" style="height:240px;"><canvas id="pmc_chart"></canvas></div>
+              <p id="cycleSummary" class="caption" style="margin:8px 0 0;"></p>
             </div>
-            <p class="caption" style="margin:8px 0 12px;">Cliquez une barre pour aller à cette semaine dans le calendrier ci-dessous. La semaine en cours (verte) combine charge réelle déjà enregistrée + séances prévues restantes ; les semaines suivantes sont théoriques et se mettent à jour en direct. ACWR &lt; 0.8 : sous-charge · <strong style="color:var(--green);">0.8–1.3 : zone optimale</strong> · &gt; 1.5 : risque blessure</p>
-            <div class="chart-wrap" style="height:240px;"><canvas id="pmc_chart"></canvas></div>
-            <p id="cycleSummary" class="caption" style="margin:8px 0 0;"></p>
+            <div id="sendResult" style="margin-top:10px;"></div>
           </div>
 
           <div class="month-nav">
@@ -96,12 +73,8 @@
             <span id="monthLabel" class="month-label"></span>
             <button class="icon-btn" id="nextMonth">›</button>
             <button class="btn-ghost" id="todayBtn" style="margin-left:8px;font-size:0.82rem;">Aujourd'hui</button>
-            <button class="btn-ghost" id="openTemplatesBtn" style="margin-left:auto;font-size:0.82rem;">📋 Modèles de semaine</button>
           </div>
-          <p class="caption" style="margin:-6px 0 12px;">Glissez-déposez une séance depuis la bibliothèque, ou entre les jours pour la déplacer. Cliquez « Préremplir »/« ✨ IA » pour générer une semaine, cliquez une séance pour la modifier, ✕ pour la retirer/supprimer.</p>
           <div id="monthGrid"></div>
-
-          <div id="sendResult" style="margin-top:12px;"></div>
         </div>
       </div>
     <% } %>
@@ -133,32 +106,6 @@
     </div>
   </div>
 
-  <!-- Modal : éditer une séance de template -->
-  <div id="tplSessionModal" class="modal-overlay">
-    <div class="modal-dialog">
-      <p class="modal-title">Séance du template</p>
-      <div class="field"><label>Nom</label><input type="text" id="tplSessName" style="width:100%" /></div>
-      <div class="field"><label>Jour</label>
-        <select id="tplSessDow" style="width:100%">
-          <option value="1">Lundi</option><option value="2">Mardi</option><option value="3">Mercredi</option>
-          <option value="4">Jeudi</option><option value="5">Vendredi</option><option value="6">Samedi</option><option value="7">Dimanche</option>
-        </select>
-      </div>
-      <div class="field"><label>Type</label>
-        <select id="tplSessType" style="width:100%">
-          <option value="Run">Run</option><option value="Ride">Ride</option>
-          <option value="Swim">Swim</option><option value="Strength">Strength</option><option value="Hike">Hike</option>
-        </select>
-      </div>
-      <div class="field"><label>Durée (min)</label><input type="number" id="tplSessDuration" min="1" max="600" style="width:100%" /></div>
-      <div class="field"><label>RPE (1–10)</label><input type="number" id="tplSessRpe" min="1" max="10" style="width:100%" /></div>
-      <div class="modal-actions">
-        <button class="btn-ghost" id="tplSessCancel">Annuler</button>
-        <button id="tplSessSave">Enregistrer</button>
-      </div>
-    </div>
-  </div>
-
   <!-- Modal : proposer une semaine via IA -->
   <div id="aiPlanModal" class="modal-overlay">
     <div class="modal-dialog">
@@ -177,17 +124,6 @@
       <div class="modal-actions">
         <button class="btn-ghost" id="aiPlanCancel">Annuler</button>
         <button id="aiPlanGenerate">✨ Générer</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Modal : modèles de semaine -->
-  <div id="templatesModal" class="modal-overlay">
-    <div class="modal-dialog" style="width:900px;">
-      <p class="modal-title">Modèles de semaine</p>
-      <div id="weekTemplatesContainer"></div>
-      <div class="modal-actions">
-        <button class="btn-ghost" id="templatesClose">Fermer</button>
       </div>
     </div>
   </div>

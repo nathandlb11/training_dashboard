@@ -42,53 +42,7 @@
   const DAYS_FR = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
   const SPORT_ICONS = { Run: '🏃', Ride: '🚴', Swim: '🏊', Strength: '🏋️', Hike: '🥾', Walk: '🚶' };
   const sportIcon = (t) => SPORT_ICONS[t] || '🎽';
-
-  // ── Default week templates ─────────────────────────────────────
-  const DEFAULT_WEEK_TEMPLATES = [
-    {
-      id: 'light', name: 'Semaine légère', color: '#35c46f',
-      sessions: [
-        { dayOfWeek: 2, name: 'EF Footing', type: 'Run', rpe: 2, durationMin: 30 },
-        { dayOfWeek: 4, name: 'EF Footing', type: 'Run', rpe: 2, durationMin: 30 },
-        { dayOfWeek: 6, name: 'Sortie longue EF', type: 'Run', rpe: 2, durationMin: 60 },
-      ],
-    },
-    {
-      id: 'base', name: 'Semaine de base', color: '#4a90d9',
-      sessions: [
-        { dayOfWeek: 2, name: 'EF Footing', type: 'Run', rpe: 2, durationMin: 45 },
-        { dayOfWeek: 3, name: 'Tempo', type: 'Run', rpe: 4, durationMin: 45 },
-        { dayOfWeek: 5, name: 'EF Footing', type: 'Run', rpe: 2, durationMin: 45 },
-        { dayOfWeek: 6, name: 'Sortie longue', type: 'Run', rpe: 3, durationMin: 90 },
-      ],
-    },
-    {
-      id: 'build', name: 'Semaine de charge', color: '#ff6b35',
-      sessions: [
-        { dayOfWeek: 2, name: 'EF Footing', type: 'Run', rpe: 2, durationMin: 45 },
-        { dayOfWeek: 3, name: 'Seuil', type: 'Run', rpe: 5, durationMin: 60 },
-        { dayOfWeek: 4, name: 'EF Récup', type: 'Run', rpe: 2, durationMin: 30 },
-        { dayOfWeek: 5, name: 'VO2max', type: 'Run', rpe: 7, durationMin: 60 },
-        { dayOfWeek: 6, name: 'Sortie longue', type: 'Run', rpe: 3, durationMin: 105 },
-      ],
-    },
-    {
-      id: 'recovery', name: 'Semaine récupération', color: '#9aa7c2',
-      sessions: [
-        { dayOfWeek: 2, name: 'EF Footing court', type: 'Run', rpe: 2, durationMin: 30 },
-        { dayOfWeek: 4, name: 'EF Footing', type: 'Run', rpe: 2, durationMin: 45 },
-        { dayOfWeek: 6, name: 'Sortie courte', type: 'Run', rpe: 2, durationMin: 45 },
-      ],
-    },
-  ];
-
-  let weekTemplates;
-  try {
-    weekTemplates = JSON.parse(localStorage.getItem('weekTemplates')) || JSON.parse(JSON.stringify(DEFAULT_WEEK_TEMPLATES));
-  } catch (_) {
-    weekTemplates = JSON.parse(JSON.stringify(DEFAULT_WEEK_TEMPLATES));
-  }
-  const saveTemplates = () => localStorage.setItem('weekTemplates', JSON.stringify(weekTemplates));
+  const CHART_HORIZON_WEEKS = 8; // horizon fixe du graphique charge/ACWR (plus de réglage utilisateur)
 
   // ── State ──────────────────────────────────────────────────────
   let athleteId = boot.athleteId || '0';
@@ -100,7 +54,8 @@
   let currentYear = _today.getFullYear();
   let currentMonth = _today.getMonth() + 1;
   let intervalsWorkouts = [];
-  let sportFilter = '';
+  let workoutFolders = [];
+  let folderFilter = '';
   let searchQuery = '';
   let pmcChart = null;
   let editingPendingId = null;
@@ -135,6 +90,7 @@
     athleteSelect: $('athleteSelect'),
     intervalsLibrary: $('intervalsLibrary'),
     libSearch: $('librarySearch'),
+    folderFilter: $('folderFilter'),
     selPanel: $('selectedSessionPanel'),
     selName: $('selSessionName'),
     selMeta: $('selSessionMeta'),
@@ -148,12 +104,7 @@
     todayBtn: $('todayBtn'),
     monthLabel: $('monthLabel'),
     monthGrid: $('monthGrid'),
-    nWeeks: $('nWeeks'),
     cycleSummary: $('cycleSummary'),
-    weekTemplatesContainer: $('weekTemplatesContainer'),
-    openTemplatesBtn: $('openTemplatesBtn'),
-    templatesModal: $('templatesModal'),
-    templatesClose: $('templatesClose'),
     sendResult: $('sendResult'),
     editModal: $('editModal'),
     editName: $('editName'),
@@ -179,20 +130,45 @@
   function renderLibrary() {
     const q = searchQuery.toLowerCase();
     const filterFn = (s) => {
-      if (sportFilter && s.type !== sportFilter) return false;
+      if (folderFilter && s.folderPath !== folderFilter) return false;
       if (q && !s.name.toLowerCase().includes(q) && !(s.description || '').toLowerCase().includes(q)) return false;
       return true;
     };
     const list = intervalsWorkouts.filter(filterFn);
-    el.intervalsLibrary.innerHTML = list.length
-      ? list.map(workoutCardHtml).join('')
-      : '<p class="caption" style="padding:10px 12px;">Aucun résultat.</p>';
+    if (!list.length) {
+      el.intervalsLibrary.innerHTML = '<p class="caption" style="padding:10px 12px;">Aucun résultat.</p>';
+      return;
+    }
+    // Regroupe par sous-dossier Intervals.icu (rangement de la bibliothèque), triés par chemin puis nom.
+    const groups = new Map();
+    list.forEach((s) => {
+      const key = s.folderPath || '';
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(s);
+    });
+    const sortedKeys = [...groups.keys()].sort((a, b) => (a || '\uffff').localeCompare(b || '\uffff'));
+    el.intervalsLibrary.innerHTML = sortedKeys
+      .map((key) => {
+        const items = groups.get(key).sort((a, b) => a.name.localeCompare(b.name));
+        const header = `<div class="lib-folder-header">${escHtml(key || 'Sans dossier')}</div>`;
+        return header + items.map(workoutCardHtml).join('');
+      })
+      .join('');
     document.querySelectorAll('.workout-card').forEach((card) => {
       card.addEventListener('click', () => {
         const session = intervalsWorkouts.find((s) => s.id === card.dataset.id);
         if (session) selectSession(session, card);
       });
     });
+  }
+
+  function populateFolderFilter() {
+    if (!el.folderFilter) return;
+    const prev = folderFilter;
+    el.folderFilter.innerHTML = '<option value="">Tous les dossiers</option>' +
+      workoutFolders.map((f) => `<option value="${escHtml(f.path)}">${escHtml(f.path)}</option>`).join('');
+    el.folderFilter.value = workoutFolders.some((f) => f.path === prev) ? prev : '';
+    folderFilter = el.folderFilter.value;
   }
 
   function workoutCardHtml(s) {
@@ -228,9 +204,12 @@
   async function loadIntervalsWorkouts() {
     el.intervalsLibrary.innerHTML = '<div class="lib-loading"><div class="spinner"></div><span>Chargement…</span></div>';
     try {
-      const res = await fetch(`/api/planning/workouts?athleteId=${encodeURIComponent(athleteId)}`);
+      // La bibliothèque de séances appartient au compte principal, pas à l'athlète sélectionné
+      // dans le sélecteur — pas de paramètre athleteId ici (voir getWorkoutLibrary côté serveur).
+      const res = await fetch('/api/planning/workouts');
       const body = await res.json();
       if (!res.ok) throw new Error(body.error);
+      workoutFolders = body.folders || [];
       intervalsWorkouts = (body.workouts || []).map((w) => {
         const TYPE_MAP = { WeightTraining: 'Strength', TrailRun: 'Run', VirtualRide: 'Ride', GravelRide: 'Ride', MountainBikeRide: 'Ride', OpenWaterSwim: 'Swim' };
         const type = TYPE_MAP[w.type] || w.type || 'Run';
@@ -243,8 +222,10 @@
           moving_time: w.moving_time || 0,
           rpe: null,
           intervals_id: w.id,
+          folderPath: w.folderPath || '',
         };
       });
+      populateFolderFilter();
       renderLibrary();
     } catch (e) {
       el.intervalsLibrary.innerHTML = `<div class="alert alert-warning" style="margin:10px;">Bibliothèque Intervals.icu indisponible : ${escHtml(e.message)}</div>`;
@@ -1078,7 +1059,7 @@
       });
     }
 
-    const nWeeks = parseInt(el.nWeeks.value) || 8;
+    const nWeeks = CHART_HORIZON_WEEKS;
     const planWeeks = getPlanWeeks(nWeeks);
     prefetchHorizonMonths(planWeeks); // best-effort ; fetchCalendarMonth rafraîchira tout à réception
     // Semaines réalisées (4 dernières max) : point de départ "comme si rien n'était encore planifié".
@@ -1089,9 +1070,7 @@
     const latestReal = realized[nRealized - 1];
     if (el.cycleSummary) {
       const parts = [];
-      if (latestReal) parts.push(`Dernière semaine réalisée : ${fmtDateFR(latestReal.week)} · ${Math.round(latestReal.load)} Foster`);
       if (chronicData && chronicData.currentWeekActual) parts.push(`Semaine en cours (réel à date) : ${Math.round(chronicData.currentWeekActual.weekly_load)} Foster`);
-      el.cycleSummary.textContent = parts.join(' · ') || 'Historique réalisé indisponible.';
     }
 
     const timelineWeeks = [...realized.map((w) => w.week), ...planWeeks];
@@ -1235,7 +1214,7 @@
 
   }
 
-  /** Navigue le calendrier vers le mois d'une semaine donnée et met en évidence sa barre d'actions (utilisé par le clic sur le graphique et par l'application d'un template). */
+  /** Navigue le calendrier vers le mois d'une semaine donnée et met en évidence sa barre d'actions (utilisé par le clic sur le graphique). */
   function goToWeek(week) {
     const weekDate = new Date(week + 'T00:00:00Z');
     currentYear = weekDate.getUTCFullYear();
@@ -1251,109 +1230,15 @@
     });
   }
 
-  // ── Week templates ─────────────────────────────────────────────
-  function renderWeekTemplates() {
-    const container = el.weekTemplatesContainer;
-    if (!container) return;
-
-    container.innerHTML = weekTemplates.map((tpl, tIdx) => {
-      const daysGrid = DAYS_FR.map((dayName, di) => {
-        const dow = di + 1;
-        const daySessions = tpl.sessions.filter((s) => s.dayOfWeek === dow);
-        const chips = daySessions.map((s, sIdx) =>
-          `<div class="tpl-chip">
-            <span>${sportIcon(s.type)} ${escHtml(s.name)}</span>
-            <span class="tpl-chip-meta">${s.durationMin}min · RPE ${s.rpe}</span>
-            <div class="tpl-chip-actions">
-              <button class="tpl-chip-edit" data-tpl="${tIdx}" data-session="${sIdx}" title="Modifier">✎</button>
-              <button class="tpl-chip-remove" data-tpl="${tIdx}" data-session="${sIdx}" title="Supprimer">✕</button>
-            </div>
-          </div>`
-        ).join('');
-        return `<div class="tpl-day">
-          <div class="tpl-day-name">${dayName}</div>
-          ${chips}
-          <button class="tpl-add-session" data-tpl="${tIdx}" data-dow="${dow}" title="Ajouter">+</button>
-        </div>`;
-      }).join('');
-
-      const load = tpl.sessions.reduce((s, x) => s + x.rpe * x.durationMin, 0);
-
-      return `<div class="tpl-card" style="border-top:3px solid ${escHtml(tpl.color)};">
-        <div class="tpl-card-header">
-          <input class="tpl-name-input" data-tpl="${tIdx}" value="${escHtml(tpl.name)}" />
-          <span class="tpl-load-badge">~${load} Foster</span>
-          <div class="tpl-apply-row">
-            <label>Appliquer à partir du</label>
-            <input type="date" class="tpl-apply-date" data-tpl="${tIdx}" value="${getMondayIso(todayIso())}" />
-            <button class="tpl-apply-btn btn-sm" data-tpl="${tIdx}">Planifier →</button>
-          </div>
-        </div>
-        <div class="tpl-days-grid">${daysGrid}</div>
-      </div>`;
-    }).join('');
-
-    container.querySelectorAll('.tpl-name-input').forEach((inp) => {
-      inp.addEventListener('change', () => { weekTemplates[+inp.dataset.tpl].name = inp.value; saveTemplates(); });
-    });
-    container.querySelectorAll('.tpl-apply-btn').forEach((btn) => {
-      btn.addEventListener('click', () => applyWeekTemplate(+btn.dataset.tpl));
-    });
-    container.querySelectorAll('.tpl-chip-remove').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        weekTemplates[+btn.dataset.tpl].sessions.splice(+btn.dataset.session, 1);
-        saveTemplates();
-        renderWeekTemplates();
-      });
-    });
-    container.querySelectorAll('.tpl-chip-edit').forEach((btn) => {
-      btn.addEventListener('click', () => openTplSessionEditor(+btn.dataset.tpl, +btn.dataset.session, null));
-    });
-    container.querySelectorAll('.tpl-add-session').forEach((btn) => {
-      btn.addEventListener('click', () => openTplSessionEditor(+btn.dataset.tpl, null, +btn.dataset.dow));
-    });
-  }
-
-  function applyWeekTemplate(tplIdx) {
-    const tpl = weekTemplates[tplIdx];
-    const dateInput = el.weekTemplatesContainer.querySelector(`.tpl-apply-date[data-tpl="${tplIdx}"]`);
-    const weekStart = getMondayIso(dateInput ? dateInput.value : todayIso());
-    for (const s of tpl.sessions) {
-      const date = addDaysIso(weekStart, s.dayOfWeek - 1);
-      const id = `pending-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-      pendingSessions.push({ id, date, name: s.name, type: s.type, description: '', moving_time: s.durationMin * 60, rpe: s.rpe });
-    }
-    el.templatesModal.style.display = 'none';
-    refreshAll();
-    goToWeek(weekStart);
-  }
-
-  function openTplSessionEditor(tplIdx, sessionIdx, dow) {
-    const modal = $('tplSessionModal');
-    const isNew = sessionIdx === null;
-    const tpl = weekTemplates[tplIdx];
-    const s = isNew ? { dayOfWeek: dow || 1, name: '', type: 'Run', rpe: 3, durationMin: 45 } : tpl.sessions[sessionIdx];
-    $('tplSessName').value = s.name;
-    $('tplSessType').value = s.type;
-    $('tplSessDow').value = s.dayOfWeek;
-    $('tplSessRpe').value = s.rpe;
-    $('tplSessDuration').value = s.durationMin;
-    modal.dataset.tpl = tplIdx;
-    modal.dataset.session = isNew ? 'new' : String(sessionIdx);
-    modal.style.display = 'flex';
-  }
-
   // ── Event wiring ──────────────────────────────────────────────
 
   if (el.athleteSelect) {
     el.athleteSelect.addEventListener('change', () => {
       athleteId = el.athleteSelect.value;
       calendarCache = {};
-      intervalsWorkouts = [];
       pendingSessions = [];
       pendingEdits = {};
       pendingDeletes.clear();
-      loadIntervalsWorkouts();
       loadChronicData();
       fetchCalendarMonth(currentYear, currentMonth);
       refreshAll();
@@ -1361,15 +1246,7 @@
   }
 
   el.libSearch.addEventListener('input', () => { searchQuery = el.libSearch.value; renderLibrary(); });
-
-  document.querySelectorAll('.sport-pill').forEach((pill) => {
-    pill.addEventListener('click', () => {
-      document.querySelectorAll('.sport-pill').forEach((p) => p.classList.remove('active'));
-      pill.classList.add('active');
-      sportFilter = pill.dataset.sport;
-      renderLibrary();
-    });
-  });
+  if (el.folderFilter) el.folderFilter.addEventListener('change', () => { folderFilter = el.folderFilter.value; renderLibrary(); });
 
   el.clearSel.addEventListener('click', clearSelection);
   el.clearPendingBtn.addEventListener('click', () => {
@@ -1382,13 +1259,6 @@
   el.confirmSendCancel.addEventListener('click', closeConfirmSendModal);
   el.confirmSendModal.addEventListener('click', (e) => { if (e.target === el.confirmSendModal) closeConfirmSendModal(); });
   el.confirmSendOk.addEventListener('click', confirmSend);
-
-  el.openTemplatesBtn.addEventListener('click', () => {
-    renderWeekTemplates();
-    el.templatesModal.style.display = 'flex';
-  });
-  el.templatesClose.addEventListener('click', () => { el.templatesModal.style.display = 'none'; });
-  el.templatesModal.addEventListener('click', (e) => { if (e.target === el.templatesModal) el.templatesModal.style.display = 'none'; });
 
   el.prevMonth.addEventListener('click', () => {
     currentMonth--; if (currentMonth < 1) { currentMonth = 12; currentYear--; }
@@ -1452,8 +1322,6 @@
   el.editDescription.addEventListener('input', updateEditComputedInfo);
   el.editRpe.addEventListener('input', updateEditComputedInfo);
 
-  if (el.nWeeks) el.nWeeks.addEventListener('change', renderLoadChart);
-
   el.aiPlanType.addEventListener('change', () => { el.aiPlanAcwr.value = defaultTargetAcwrFor(el.aiPlanType.value); });
   el.aiPlanCancel.addEventListener('click', closeAiPlanModal);
   el.aiPlanModal.addEventListener('click', (e) => { if (e.target === el.aiPlanModal) closeAiPlanModal(); });
@@ -1468,30 +1336,6 @@
   });
 
   wireDragAndDrop(el.monthGrid, '.mcal-day:not(.outside)');
-
-  const tplSessionModal = $('tplSessionModal');
-  $('tplSessSave').addEventListener('click', () => {
-    const tplIdx = +tplSessionModal.dataset.tpl;
-    const sessionIdx = tplSessionModal.dataset.session;
-    const s = {
-      dayOfWeek: parseInt($('tplSessDow').value),
-      name: $('tplSessName').value.trim() || 'Séance',
-      type: $('tplSessType').value,
-      rpe: parseInt($('tplSessRpe').value) || 3,
-      durationMin: parseInt($('tplSessDuration').value) || 30,
-    };
-    if (sessionIdx === 'new') {
-      weekTemplates[tplIdx].sessions.push(s);
-    } else {
-      weekTemplates[tplIdx].sessions[+sessionIdx] = s;
-    }
-    weekTemplates[tplIdx].sessions.sort((a, b) => a.dayOfWeek - b.dayOfWeek);
-    saveTemplates();
-    tplSessionModal.style.display = 'none';
-    renderWeekTemplates();
-  });
-  $('tplSessCancel').addEventListener('click', () => { tplSessionModal.style.display = 'none'; });
-  tplSessionModal.addEventListener('click', (e) => { if (e.target === tplSessionModal) tplSessionModal.style.display = 'none'; });
 
   // ── Init ──────────────────────────────────────────────────────
   renderLibrary();

@@ -287,7 +287,7 @@ async function buildDashboardData({
   periodStart,
   periodEnd,
   types,
-  forecastWeeks = 8,
+  forecastWeeks = 52,
 }) {
   const rawEvents = await fetchIntervalsEvents(apiKey, historyStart, historyEnd, athleteId);
   const df = prepareActivities(rawEvents);

@@ -42,9 +42,12 @@ a { color: var(--accent-2); }
   flex-wrap: wrap;
   gap: 10px;
 }
-.brand { font-weight: 700; font-size: 1.05rem; }
+.brand { font-weight: 700; font-size: 1.05rem; display: flex; align-items: center; gap: 8px; }
 .tabs { display: flex; gap: 8px; }
 .tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   padding: 8px 14px;
   border-radius: 999px;
   text-decoration: none;
@@ -54,6 +57,15 @@ a { color: var(--accent-2); }
 }
 .tab:hover { color: var(--text); }
 .tab.active { background: var(--panel-2); color: var(--text); border-color: var(--border); }
+.topbar-right { display: flex; align-items: center; gap: 12px; }
+.nav-athlete-select {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 7px 10px;
+  font-size: 0.9rem;
+}
 
 main {
   max-width: 1180px;
@@ -100,12 +112,6 @@ h2, .subheader { font-size: 1.15rem; margin: 32px 0 12px; color: var(--text); }
   padding: 7px 10px;
   font-size: 0.9rem;
 }
-.field-types { display: flex; flex-wrap: wrap; gap: 8px 14px; max-width: 420px; }
-.chip-check { display: flex; align-items: center; gap: 5px; font-size: 0.85rem; color: var(--text-dim); }
-.chip-check input { accent-color: var(--accent); }
-
-.range-field { display: flex; flex-direction: column; gap: 5px; }
-.range-field output { font-size: 0.85rem; color: var(--text-dim); }
 
 button, .btn {
   background: var(--accent);
@@ -164,26 +170,11 @@ hr.sep { border: none; border-top: 1px solid var(--border); margin: 28px 0; }
 /* ── Planning page ────────────────────────────────────────────── */
 .planning-page { max-width: 100%; padding: 0; margin: 0; }
 
-.planning-topbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 12px;
-  padding: 16px 24px 12px;
-  border-bottom: 1px solid var(--border);
-  background: var(--panel);
-  position: sticky;
-  top: 53px;
-  z-index: 15;
-}
-.planning-topbar-right { display: flex; gap: 12px; align-items: flex-end; }
-
 .planning-layout {
   display: grid;
   grid-template-columns: 300px 1fr;
   gap: 0;
-  min-height: calc(100vh - 120px);
+  min-height: calc(100vh - 53px);
 }
 
 /* ── Sidebar ─────────────────────────────────────────────────── */
@@ -194,8 +185,8 @@ hr.sep { border: none; border-top: 1px solid var(--border); margin: 28px 0; }
   flex-direction: column;
   overflow: hidden;
   position: sticky;
-  top: 106px;
-  height: calc(100vh - 106px);
+  top: 53px;
+  height: calc(100vh - 53px);
 }
 
 .sidebar-header {
@@ -236,26 +227,17 @@ hr.sep { border: none; border-top: 1px solid var(--border); margin: 28px 0; }
   font-size: 0.85rem;
 }
 
-.sport-filter {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-  padding: 4px 12px 8px;
-  flex-shrink: 0;
-}
-.sport-pill {
-  background: var(--panel-2);
-  border: 1px solid var(--border);
-  color: var(--text-dim);
-  border-radius: 999px;
-  padding: 3px 10px;
-  font-size: 0.75rem;
-  cursor: pointer;
-  font-weight: 600;
-}
-.sport-pill.active { background: var(--accent); color: #14100c; border-color: var(--accent); }
-
 .lib-tab-content { flex: 1; overflow-y: auto; }
+
+.lib-folder-header {
+  padding: 8px 14px 4px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-dim);
+  background: var(--panel-2);
+}
 
 .workout-card {
   padding: 10px 14px;
@@ -303,7 +285,24 @@ hr.sep { border: none; border-top: 1px solid var(--border); margin: 28px 0; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* ── Main planning area ───────────────────────────────────────── */
-.planning-main { padding: 16px 20px 60px; overflow-y: auto; }
+/* Pas d'overflow-y ici : "auto" ferait de ce conteneur le contexte de scroll de ses
+   descendants, ce qui casse position:sticky pour .pmc-sticky-wrap (il resterait
+   collé au conteneur au lieu de suivre le scroll réel de la fenêtre). */
+.planning-main { padding: 16px 20px 60px; }
+
+/* Graph "Charge hebdo Foster & ACWR" collant : reste visible en scrollant (même offset que
+   .planning-sidebar), se réduit sur les petits écrans ; les résultats d'envoi/commentaires IA
+   (#sendResult) restent affichés juste dessous, toujours visibles. */
+.pmc-sticky-wrap {
+  position: sticky;
+  top: 53px;
+  z-index: 12;
+  background: var(--bg);
+  padding-bottom: 6px;
+  margin-bottom: 14px;
+  box-shadow: 0 12px 14px -12px rgba(0, 0, 0, 0.55);
+}
+.pmc-sticky-wrap .chart-wrap { height: clamp(140px, 22vh, 240px); }
 
 .pending-banner {
   display: flex;
@@ -638,59 +637,7 @@ hr.sep { border: none; border-top: 1px solid var(--border); margin: 28px 0; }
   outline: none; border-color: var(--accent);
 }
 
-/* ── Week templates ──────────────────────────────────────────── */
-.tpl-card {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  margin-bottom: 20px;
-  overflow: hidden;
-}
-.tpl-card-header {
-  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-  padding: 12px 14px 10px; background: var(--panel-2);
-}
-.tpl-name-input {
-  background: transparent; border: none; border-bottom: 1px solid var(--border);
-  color: var(--text); font-size: 0.95rem; font-weight: 700; padding: 2px 4px; min-width: 160px;
-}
-.tpl-name-input:focus { outline: none; border-bottom-color: var(--accent); }
-.tpl-load-badge {
-  font-size: 0.74rem; color: var(--text-dim);
-  background: var(--panel); border: 1px solid var(--border);
-  border-radius: 999px; padding: 2px 9px;
-}
-.tpl-apply-row { display: flex; align-items: center; gap: 8px; margin-left: auto; flex-wrap: wrap; }
-.tpl-apply-row label { font-size: 0.78rem; color: var(--text-dim); }
-.tpl-apply-date {
-  background: var(--panel); border: 1px solid var(--border);
-  color: var(--text); border-radius: 6px; padding: 4px 8px; font-size: 0.82rem;
-}
 .btn-sm { font-size: 0.82rem; padding: 5px 12px; }
-
-.tpl-days-grid { display: grid; grid-template-columns: repeat(7, 1fr); border-top: 1px solid var(--border); }
-.tpl-day { border-right: 1px solid var(--border); padding: 8px 6px; min-height: 70px; }
-.tpl-day:last-child { border-right: none; }
-.tpl-day-name { font-size: 0.65rem; text-transform: uppercase; font-weight: 700; color: var(--text-dim); margin-bottom: 5px; }
-
-.tpl-chip {
-  background: var(--panel-2); border: 1px solid var(--border);
-  border-radius: 5px; padding: 4px 5px; font-size: 0.72rem; margin-bottom: 4px;
-}
-.tpl-chip-meta { display: block; font-size: 0.65rem; color: var(--text-dim); margin-top: 2px; }
-.tpl-chip-actions { display: flex; gap: 2px; margin-top: 3px; }
-.tpl-chip-edit, .tpl-chip-remove {
-  background: none; border: none; color: var(--text-dim); cursor: pointer; padding: 1px 3px; font-size: 0.72rem;
-}
-.tpl-chip-edit:hover { color: var(--accent-2); }
-.tpl-chip-remove:hover { color: var(--red); }
-
-.tpl-add-session {
-  background: none; border: 1px dashed var(--border);
-  color: var(--text-dim); border-radius: 5px; width: 100%;
-  padding: 2px; font-size: 0.82rem; cursor: pointer; margin-top: 3px;
-}
-.tpl-add-session:hover { border-color: var(--accent); color: var(--accent); }
 
 /* ── Confirmation d'envoi ─────────────────────────────────────── */
 .confirm-send-summary ul { margin: 4px 0 0; padding-left: 18px; font-size: 0.82rem; color: var(--text-dim); max-height: 160px; overflow-y: auto; }

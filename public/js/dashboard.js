@@ -10,9 +10,6 @@
   const els = {
     athlete: document.getElementById('athleteSelect'),
     historyStart: document.getElementById('historyStart'),
-    forecastWeeks: document.getElementById('forecastWeeks'),
-    forecastWeeksOut: document.getElementById('forecastWeeksOut'),
-    typesFilter: document.getElementById('typesFilter'),
     content: document.getElementById('dashboard-content'),
     toggleNotesBtn: document.getElementById('toggleNotesBtn'),
   };
@@ -101,27 +98,12 @@
   }
 
   function currentParams() {
-    const checked = [...els.typesFilter.querySelectorAll('input[type=checkbox]:checked')].map((c) => c.value);
     const params = {
       athleteId: els.athlete.value,
       historyStart: els.historyStart.value,
-      forecastWeeks: els.forecastWeeks.value,
-      types: checked.join(','),
     };
     if (boot.widgetToken) params.token = boot.widgetToken;
     return params;
-  }
-
-  function buildTypeFilter(meta) {
-    els.typesFilter.innerHTML = '';
-    meta.allTypes.forEach((t) => {
-      const id = `type-${t}`;
-      const wrap = document.createElement('label');
-      wrap.className = 'chip-check';
-      wrap.innerHTML = `<input type="checkbox" id="${id}" value="${t}" ${meta.selectedTypes.includes(t) ? 'checked' : ''}/> ${t}`;
-      els.typesFilter.appendChild(wrap);
-    });
-    els.typesFilter.querySelectorAll('input').forEach((cb) => cb.addEventListener('change', onFilterChange));
   }
 
   async function fetchData(params) {
@@ -135,7 +117,6 @@
   }
 
   const onFilterChange = debounce(async () => {
-    els.forecastWeeksOut.textContent = `${els.forecastWeeks.value} semaines`;
     try {
       const data = await fetchData(currentParams());
       render(data, false);
@@ -145,10 +126,6 @@
   }, 350);
 
   [els.athlete, els.historyStart].forEach((el) => el.addEventListener('change', onFilterChange));
-  els.forecastWeeks.addEventListener('input', () => {
-    els.forecastWeeksOut.textContent = `${els.forecastWeeks.value} semaines`;
-  });
-  els.forecastWeeks.addEventListener('change', onFilterChange);
 
   function destroyChart(id) {
     if (charts[id]) {
@@ -641,10 +618,6 @@
     if (data.empty) {
       els.content.innerHTML = `<div class="alert alert-warning">${data.message}</div>`;
       return;
-    }
-
-    if (isInitial) {
-      buildTypeFilter(data.meta);
     }
 
     els.content.innerHTML = `

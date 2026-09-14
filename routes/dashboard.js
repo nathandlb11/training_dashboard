@@ -28,7 +28,10 @@ function parseQuery(req) {
     // Toujours jusqu'à aujourd'hui / la dernière activité : non paramétrable par l'utilisateur.
     historyEnd: today,
     types: req.query.types ? String(req.query.types).split(',').filter(Boolean) : undefined,
-    forecastWeeks: req.query.forecastWeeks ? Number(req.query.forecastWeeks) : 8,
+    // Pas de paramètre utilisateur : fenêtre large pour couvrir automatiquement toutes les
+    // semaines déjà planifiées sur Intervals.icu (le calcul en aval s'arrête de toute façon à la
+    // dernière semaine réellement planifiée, voir calculateForecastAcwr).
+    forecastWeeks: req.query.forecastWeeks ? Number(req.query.forecastWeeks) : 52,
   };
 }
 

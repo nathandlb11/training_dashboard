@@ -8,10 +8,7 @@
 
   <main>
     <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px;">
-      <div>
-        <h1>Training Load Dashboard</h1>
-        <p class="caption">Intervals.icu API → charge Foster, CAP et vélo</p>
-      </div>
+      <h1 style="margin:0;">Training Load Dashboard</h1>
       <button type="button" class="btn-ghost" id="toggleNotesBtn" style="display:none;">🗒️ Afficher les notes</button>
     </div>
 
@@ -30,26 +27,9 @@
       <div class="card" id="filters-card">
         <div class="filters">
           <div class="field">
-            <label for="athleteSelect">👤 Athlète</label>
-            <select id="athleteSelect">
-              <% athletes.forEach(a => { %>
-                <option value="<%= a.id %>" <%= a.id === params.athleteId ? 'selected' : '' %>><%= a.label %></option>
-              <% }) %>
-            </select>
-          </div>
-          <div class="field">
             <label for="historyStart">Début d'analyse</label>
             <input type="date" id="historyStart" value="<%= params.historyStart %>" />
           </div>
-          <div class="range-field">
-            <label for="forecastWeeks">Horizon planifié (semaines)</label>
-            <input type="range" id="forecastWeeks" min="1" max="26" value="<%= params.forecastWeeks || 8 %>" />
-            <output id="forecastWeeksOut"><%= params.forecastWeeks || 8 %> semaines</output>
-          </div>
-        </div>
-        <div class="field" style="margin-top:14px;">
-          <label>Activités</label>
-          <div class="field-types" id="typesFilter"></div>
         </div>
       </div>
 
