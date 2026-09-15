@@ -169,7 +169,7 @@ const SPORT_ICONS = {
  Swim:
    "\uD83C\uDFCA",
  Strength:
-   "\uD83C\uDFCB\uFE0F",
+   "\uD83D\uDCAA",
  Hike:
    "\uD83E\uDD7E",
  Walk:

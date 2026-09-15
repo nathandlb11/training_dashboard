@@ -40,8 +40,9 @@
     String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
   const DAYS_FR = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
-  const SPORT_ICONS = { Run: '🏃', Ride: '🚴', Swim: '🏊', Strength: '🏋️', Hike: '🥾', Walk: '🚶' };
-  const sportIcon = (t) => SPORT_ICONS[t] || '🎽';
+  const SPORT_TYPE_MAP = { WeightTraining: 'Strength', TrailRun: 'Run', VirtualRide: 'Ride', GravelRide: 'Ride', MountainBikeRide: 'Ride', OpenWaterSwim: 'Swim' };
+  const SPORT_ICONS = { Run: '🏃', Ride: '🚴', Swim: '🏊', Strength: '💪', Hike: '🥾', Walk: '🚶' };
+  const sportIcon = (t) => SPORT_ICONS[SPORT_TYPE_MAP[t] || t] || '🎽';
   const CHART_HORIZON_WEEKS = 8; // horizon fixe du graphique charge/ACWR (plus de réglage utilisateur)
 
   // ── State ──────────────────────────────────────────────────────
@@ -49,7 +50,7 @@
   let chronicData = boot.chronicData;
   let calendarCache = {}; // "YYYY-MM" -> [sessions] | null (loading)
   let pendingSessions = [];
-  let selectedSession = null;
+  let libraryTargetDate = null; // date en attente de sélection dans la modale bibliothèque
   const _today = new Date();
   let currentYear = _today.getFullYear();
   let currentMonth = _today.getMonth() + 1;
@@ -91,10 +92,9 @@
     intervalsLibrary: $('intervalsLibrary'),
     libSearch: $('librarySearch'),
     folderFilter: $('folderFilter'),
-    selPanel: $('selectedSessionPanel'),
-    selName: $('selSessionName'),
-    selMeta: $('selSessionMeta'),
-    clearSel: $('clearSelection'),
+    libraryModal: $('libraryModal'),
+    libraryCancel: $('libraryCancel'),
+    librarySessionLibre: $('librarySessionLibre'),
     pendingBanner: $('pendingBanner'),
     pendingCount: $('pendingCount'),
     clearPendingBtn: $('clearPendingBtn'),
@@ -157,7 +157,10 @@
     document.querySelectorAll('.workout-card').forEach((card) => {
       card.addEventListener('click', () => {
         const session = intervalsWorkouts.find((s) => s.id === card.dataset.id);
-        if (session) selectSession(session, card);
+        if (session) {
+          addPendingSession(libraryTargetDate, session);
+          closeLibraryModal();
+        }
       });
     });
   }
@@ -173,8 +176,7 @@
 
   function workoutCardHtml(s) {
     const dur = s.moving_time ? fmtMinutes(Math.round(s.moving_time / 60)) : '';
-    const isSel = selectedSession && selectedSession.id === s.id;
-    return `<div class="workout-card${isSel ? ' selected' : ''}" data-id="${escHtml(s.id)}" title="Cliquer pour sélectionner, puis cliquer un jour du calendrier">
+    return `<div class="workout-card" data-id="${escHtml(s.id)}" title="Cliquer pour ajouter cette séance au jour choisi">
       <div class="workout-card-header">
         <span class="workout-icon">${sportIcon(s.type)}</span>
         <span class="workout-name">${escHtml(s.name)}</span>
@@ -183,22 +185,14 @@
     </div>`;
   }
 
-  function selectSession(session, cardEl) {
-    selectedSession = session;
-    el.selPanel.style.display = 'block';
-    el.selName.textContent = session.name;
-    const dur = session.moving_time ? fmtMinutes(Math.round(session.moving_time / 60)) : '';
-    el.selMeta.textContent = [sportIcon(session.type), session.type, dur, session.rpe ? `RPE ${session.rpe}` : ''].filter(Boolean).join(' · ');
-    document.querySelectorAll('.workout-card.selected').forEach((c) => c.classList.remove('selected'));
-    if (cardEl) cardEl.classList.add('selected');
-    renderMonthCalendar(); // refresh droppable state
+  function openLibraryModal(date) {
+    libraryTargetDate = date;
+    el.libraryModal.style.display = 'flex';
   }
 
-  function clearSelection() {
-    selectedSession = null;
-    el.selPanel.style.display = 'none';
-    document.querySelectorAll('.workout-card.selected').forEach((c) => c.classList.remove('selected'));
-    renderMonthCalendar();
+  function closeLibraryModal() {
+    el.libraryModal.style.display = 'none';
+    libraryTargetDate = null;
   }
 
   async function loadIntervalsWorkouts() {
@@ -211,8 +205,7 @@
       if (!res.ok) throw new Error(body.error);
       workoutFolders = body.folders || [];
       intervalsWorkouts = (body.workouts || []).map((w) => {
-        const TYPE_MAP = { WeightTraining: 'Strength', TrailRun: 'Run', VirtualRide: 'Ride', GravelRide: 'Ride', MountainBikeRide: 'Ride', OpenWaterSwim: 'Swim' };
-        const type = TYPE_MAP[w.type] || w.type || 'Run';
+        const type = SPORT_TYPE_MAP[w.type] || w.type || 'Run';
         return {
           id: `intervals::${w.id}`,
           source: 'intervals',
@@ -270,7 +263,7 @@
     refreshAll();
   }
 
-  function dayCellHtml(date, inMonth, todayStr, canAdd) {
+  function dayCellHtml(date, inMonth, todayStr) {
     const isToday = date === todayStr;
     const isPast = date < todayStr;
     const daySessions = realSessionsForDate(date);
@@ -278,13 +271,13 @@
     const mk = monthKey(...date.split('-').slice(0, 2).map(Number));
     const loading = calendarCache[mk] === null;
 
-    return `<div class="mcal-day${inMonth ? '' : ' outside'}${isToday ? ' today' : ''}${isPast ? ' past' : ''}${canAdd && inMonth ? ' droppable' : ''}" data-date="${date}">
+    return `<div class="mcal-day${inMonth ? '' : ' outside'}${isToday ? ' today' : ''}${isPast ? ' past' : ''}" data-date="${date}">
       <div class="mcal-day-num${isToday ? ' today-badge' : ''}">${parseInt(date.slice(8), 10)}</div>
       <div class="mcal-sessions">
         ${loading && inMonth ? '<div class="chip-loading">…</div>' : ''}
         ${daySessions.map((s) => sessionChipHtml(s, 'real')).join('')}
         ${dayPending.map((s) => sessionChipHtml(s, 'pending')).join('')}
-        ${!isPast && inMonth ? `<button class="plan-add-session" data-date="${date}">+ Séance</button>` : ''}
+        ${!isPast && inMonth ? `<button class="plan-add-session" data-date="${date}">+<span class="plan-add-label"> Séance</span></button>` : ''}
       </div>
     </div>`;
   }
@@ -310,7 +303,7 @@
         <input type="number" class="cw-bike" data-week="${week}" min="0" max="8" value="${state.nBike}" title="Séances vélo" />
         <input type="number" class="cw-strength" data-week="${week}" min="0" max="6" value="${state.nStrength}" title="Séances renfo" />
         <button class="cw-prefill btn-sm" data-week="${week}">Préremplir</button>
-        <button class="cw-ai-prefill btn-sm" data-week="${week}" title="Proposer une semaine via IA (Claude)">✨ IA</button>
+        <button class="cw-ai-prefill btn-sm" data-week="${week}" title="Proposer une semaine via IA (Claude)">IA</button>
       </div>
     </div>`;
   }
@@ -320,7 +313,6 @@
     if (calendarCache[mk] === undefined) fetchCalendarMonth(currentYear, currentMonth);
     const todayStr = todayIso();
     const monthStr = String(currentMonth).padStart(2, '0');
-    const canAdd = !!selectedSession;
 
     el.monthLabel.textContent = fmtMonthFR(currentYear, currentMonth);
 
@@ -329,7 +321,7 @@
 
     for (const monIso of weeks) {
       const weekEnd = addDaysIso(monIso, 6);
-      const daysHtml = Array.from({ length: 7 }, (_, i) => dayCellHtml(addDaysIso(monIso, i), addDaysIso(monIso, i).slice(5, 7) === monthStr, todayStr, canAdd)).join('');
+      const daysHtml = Array.from({ length: 7 }, (_, i) => dayCellHtml(addDaysIso(monIso, i), addDaysIso(monIso, i).slice(5, 7) === monthStr, todayStr)).join('');
       if (weekEnd >= todayStr) {
         html += `<div class="mcal-week-block">${weekActionsHtml(monIso)}<div class="mcal-week">${daysHtml}</div></div>`;
       } else {
@@ -353,8 +345,8 @@
     const dur = durMin ? fmtMinutes(durMin) : (s.temps || '');
     if (mode === 'pending') {
       const load = Math.round(pendingLoad(s));
-      return `<div class="session-chip pending" draggable="true" data-pending-id="${escHtml(s.id)}" title="Glisser pour déplacer · cliquer pour modifier">
-        <span>${icon} ${name}</span>
+      return `<div class="session-chip pending" draggable="true" data-pending-id="${escHtml(s.id)}" title="${name} · Glisser pour déplacer · cliquer pour modifier">
+        <span class="chip-icon">${icon}</span><span class="chip-name">${name}</span>
         ${s.qualityKind ? `<span class="chip-quality">${escHtml(s.qualityKind)}</span>` : ''}
         ${dur ? `<span class="chip-dur">${dur}</span>` : ''}
         <span class="chip-load">${load}</span>
@@ -364,8 +356,8 @@
     const load = realSessionLoad(s, durMin);
     const cls = `session-chip real${s.edited ? ' edited' : ''}${s.toDelete ? ' to-delete' : ''}`;
     const draggable = !s.toDelete;
-    return `<div class="${cls}" draggable="${draggable}" data-event-id="${escHtml(s.id)}" title="Glisser pour déplacer · cliquer pour modifier · ✕ pour ${s.toDelete ? 'annuler la suppression' : 'supprimer'} (confirmation demandée avant envoi)">
-      <span>${icon} ${name}</span>
+    return `<div class="${cls}" draggable="${draggable}" data-event-id="${escHtml(s.id)}" title="${name} · Glisser pour déplacer · cliquer pour modifier · ✕ pour ${s.toDelete ? 'annuler la suppression' : 'supprimer'} (confirmation demandée avant envoi)">
+      <span class="chip-icon">${icon}</span><span class="chip-name">${name}</span>
       ${dur ? `<span class="chip-dur">${dur}</span>` : ''}
       ${load != null ? `<span class="chip-load">${load}</span>` : ''}
       <button class="chip-remove" title="${s.toDelete ? 'Annuler la suppression' : 'Supprimer'}">${s.toDelete ? '↺' : '✕'}</button>
@@ -471,17 +463,16 @@
   }
 
   function addPendingSession(date, session) {
-    const src = session || selectedSession;
-    if (!src) return;
+    if (!date || !session) return;
     const id = `pending-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     pendingSessions.push({
       id,
       date,
-      name: src.name,
-      type: src.type,
-      description: src.description || '',
-      moving_time: src.moving_time || 0,
-      rpe: src.rpe || 3,
+      name: session.name,
+      type: session.type,
+      description: session.description || '',
+      moving_time: session.moving_time || 0,
+      rpe: session.rpe || 3,
     });
     refreshAll();
   }
@@ -1031,7 +1022,7 @@
       }
     } catch (e) {
       if (el.sendResult) el.sendResult.innerHTML = `<div class="alert alert-error">Erreur IA : ${escHtml(e.message)}</div>`;
-      if (btn) { btn.disabled = false; btn.textContent = '✨ IA'; }
+      if (btn) { btn.disabled = false; btn.textContent = 'IA'; }
     }
   }
 
@@ -1179,7 +1170,7 @@
           goToWeek(planWeeks[idx - nRealized]);
         },
         plugins: {
-          legend: { labels: { color: '#9aa7c2', filter: (item) => item.text !== '' } },
+          legend: { display: false },
           tooltip: {
             mode: 'index',
             callbacks: {
@@ -1248,7 +1239,14 @@
   el.libSearch.addEventListener('input', () => { searchQuery = el.libSearch.value; renderLibrary(); });
   if (el.folderFilter) el.folderFilter.addEventListener('change', () => { folderFilter = el.folderFilter.value; renderLibrary(); });
 
-  el.clearSel.addEventListener('click', clearSelection);
+  el.libraryCancel.addEventListener('click', closeLibraryModal);
+  el.libraryModal.addEventListener('click', (e) => { if (e.target === el.libraryModal) closeLibraryModal(); });
+  el.librarySessionLibre.addEventListener('click', () => {
+    const date = libraryTargetDate;
+    closeLibraryModal();
+    if (date) addManualPlanSession(date);
+  });
+
   el.clearPendingBtn.addEventListener('click', () => {
     pendingSessions = [];
     pendingEdits = {};
@@ -1310,10 +1308,7 @@
     if (realChip && realChip.dataset.eventId) { openEditModalForReal(realChip.dataset.eventId); return; }
 
     const addBtn = e.target.closest('.plan-add-session');
-    if (addBtn) { addManualPlanSession(addBtn.dataset.date); return; }
-
-    const dayCell = e.target.closest('.mcal-day:not(.outside)');
-    if (dayCell && selectedSession) addPendingSession(dayCell.dataset.date);
+    if (addBtn) { openLibraryModal(addBtn.dataset.date); return; }
   });
 
   el.editSave.addEventListener('click', saveEditModal);

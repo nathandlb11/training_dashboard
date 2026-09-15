@@ -14,40 +14,7 @@
     <% } else { %>
       <% if (error) { %><div class="alert alert-error" style="margin-top:12px;"><%= error %></div><% } %>
 
-      <div class="planning-layout" id="planningLayout">
-
-        <aside class="planning-sidebar" id="planningSidebar">
-          <div class="sidebar-header">
-            <span class="sidebar-title">Bibliothèque</span>
-          </div>
-          <div class="sidebar-search">
-            <input type="text" id="librarySearch" placeholder="Rechercher…" autocomplete="off" />
-          </div>
-
-          <div class="field" style="margin:0 12px 8px;">
-            <select id="folderFilter">
-              <option value="">Tous les dossiers</option>
-            </select>
-          </div>
-
-          <div id="tabIntervals" class="lib-tab-content">
-            <div id="intervalsLibrary">
-              <div class="lib-loading"><div class="spinner"></div><span>Chargement…</span></div>
-            </div>
-          </div>
-
-          <div id="selectedSessionPanel" class="selected-session-panel" style="display:none;">
-            <div class="selected-session-header">
-              <span id="selSessionName" class="sel-name"></span>
-              <button class="icon-btn" id="clearSelection" title="Désélectionner">✕</button>
-            </div>
-            <div class="sel-meta" id="selSessionMeta"></div>
-            <p class="caption" style="margin:8px 0 4px;">Cliquez sur un jour du calendrier pour placer cette séance.</p>
-          </div>
-        </aside>
-
-        <!-- ===================== ZONE PRINCIPALE ===================== -->
-        <div class="planning-main">
+      <div class="planning-main" id="planningLayout">
 
           <div id="pendingBanner" class="pending-banner" style="display:none;">
             <span id="pendingCount"></span>
@@ -75,10 +42,31 @@
             <button class="btn-ghost" id="todayBtn" style="margin-left:8px;font-size:0.82rem;">Aujourd'hui</button>
           </div>
           <div id="monthGrid"></div>
-        </div>
       </div>
     <% } %>
   </main>
+
+  <!-- Modal : choisir une séance dans la bibliothèque pour l'ajouter à un jour -->
+  <div id="libraryModal" class="modal-overlay">
+    <div class="modal-dialog" style="width:480px;">
+      <p class="modal-title">Choisir une séance</p>
+      <div class="sidebar-search" style="padding:0 0 10px;">
+        <input type="text" id="librarySearch" placeholder="Rechercher…" autocomplete="off" />
+      </div>
+      <div class="field">
+        <select id="folderFilter">
+          <option value="">Tous les dossiers</option>
+        </select>
+      </div>
+      <div id="intervalsLibrary" style="max-height:45vh;overflow-y:auto;border:1px solid var(--border);border-radius:8px;">
+        <div class="lib-loading"><div class="spinner"></div><span>Chargement…</span></div>
+      </div>
+      <div class="modal-actions" style="justify-content:space-between;">
+        <button class="btn-ghost" id="librarySessionLibre">Séance libre</button>
+        <button class="btn-ghost" id="libraryCancel">Annuler</button>
+      </div>
+    </div>
+  </div>
 
   <!-- Modal : modifier une séance (en attente ou déjà envoyée) -->
   <div id="editModal" class="modal-overlay">

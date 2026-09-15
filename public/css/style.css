@@ -287,14 +287,14 @@ details.expander > summary::before {
 details.expander[open] > summary::before { transform: rotate(90deg); }
 details.expander[open] > summary { margin-bottom: 12px; }
 
-.grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
-.grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
-.grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+.grid-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.grid-4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
 @media (max-width: 720px) {
   .grid-3, .grid-2, .grid-4 { grid-template-columns: 1fr; }
 }
 
-.session-editor-row { display: grid; grid-template-columns: 1.4fr 0.8fr 0.8fr 0.7fr 1fr; gap: 8px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 0.88rem; }
+.session-editor-row { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 0.8fr) minmax(0, 0.8fr) minmax(0, 0.7fr) minmax(0, 1fr); gap: 8px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 0.88rem; }
 .session-editor-row.header { color: var(--text-dim); font-size: 0.76rem; text-transform: uppercase; }
 
 .pill { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 0.74rem; font-weight: 600; }
@@ -329,54 +329,6 @@ hr.sep { border: none; border-top: 1px solid var(--border-soft); margin: 32px 0;
 /* ── Planning page ────────────────────────────────────────────── */
 .planning-page { max-width: 100%; padding: 0; margin: 0; padding-bottom: env(safe-area-inset-bottom); }
 
-.planning-layout {
-  display: grid;
-  grid-template-columns: 300px 1fr;
-  gap: 0;
-  min-height: calc(100vh - 53px);
-  min-height: calc(100dvh - 53px); /* hauteur de viewport dynamique iOS (barre Safari qui se rétracte) */
-}
-
-/* ── Sidebar ─────────────────────────────────────────────────── */
-.planning-sidebar {
-  border-right: 1px solid var(--border);
-  background: var(--panel);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  position: sticky;
-  top: 53px;
-  height: calc(100vh - 53px);
-  height: calc(100dvh - 53px);
-}
-
-.sidebar-header {
-  padding: 14px 14px 0;
-  flex-shrink: 0;
-}
-.sidebar-title { font-weight: 700; font-size: 0.95rem; display: block; margin-bottom: 10px; }
-
-.lib-tabs {
-  display: flex;
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-}
-.lib-tab {
-  flex: 1;
-  background: none;
-  border: none;
-  border-bottom: 2px solid transparent;
-  color: var(--text-dim);
-  padding: 8px 10px;
-  cursor: pointer;
-  font-size: 0.83rem;
-  font-weight: 600;
-  border-radius: 0;
-  transition: color 0.15s, border-color 0.15s;
-}
-.lib-tab:hover { color: var(--text); }
-.lib-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
-
 .sidebar-search { padding: 10px 12px 6px; flex-shrink: 0; }
 .sidebar-search input {
   width: 100%;
@@ -387,8 +339,6 @@ hr.sep { border: none; border-top: 1px solid var(--border-soft); margin: 32px 0;
   padding: 6px 12px;
   font-size: 0.85rem;
 }
-
-.lib-tab-content { flex: 1; overflow-y: auto; }
 
 .lib-folder-header {
   padding: 8px 14px 4px;
@@ -407,21 +357,11 @@ hr.sep { border: none; border-top: 1px solid var(--border-soft); margin: 32px 0;
   transition: background 0.12s;
 }
 .workout-card:hover { background: var(--panel-2); }
-.workout-card.selected { background: rgba(255,107,53,0.12); border-left: 3px solid var(--accent); }
 .workout-card-header { display: flex; align-items: center; gap: 7px; }
 .workout-icon { font-size: 1rem; flex-shrink: 0; }
 .workout-name { font-size: 0.86rem; font-weight: 600; line-height: 1.3; }
 .workout-meta { font-size: 0.75rem; color: var(--text-dim); margin-top: 3px; padding-left: 24px; }
 
-.selected-session-panel {
-  border-top: 1px solid var(--border);
-  background: rgba(255,107,53,0.06);
-  padding: 12px 14px;
-  flex-shrink: 0;
-}
-.selected-session-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
-.sel-name { font-weight: 700; font-size: 0.9rem; line-height: 1.3; }
-.sel-meta { font-size: 0.8rem; color: var(--text-dim); }
 .icon-btn {
   background: none;
   border: 1px solid var(--border);
@@ -449,7 +389,7 @@ hr.sep { border: none; border-top: 1px solid var(--border-soft); margin: 32px 0;
 /* Pas d'overflow-y ici : "auto" ferait de ce conteneur le contexte de scroll de ses
    descendants, ce qui casse position:sticky pour .pmc-sticky-wrap (il resterait
    collé au conteneur au lieu de suivre le scroll réel de la fenêtre). */
-.planning-main { padding: 16px 20px 60px; padding-right: max(20px, env(safe-area-inset-right)); padding-bottom: max(60px, env(safe-area-inset-bottom)); }
+.planning-main { padding: 16px 20px 60px; padding-right: max(20px, env(safe-area-inset-right)); padding-bottom: max(60px, env(safe-area-inset-bottom)); min-width: 0; }
 
 /* Graph "Charge hebdo Foster & ACWR" collant : reste visible en scrollant (même offset que
    .planning-sidebar), se réduit sur les petits écrans ; les résultats d'envoi/commentaires IA
@@ -524,7 +464,7 @@ hr.sep { border: none; border-top: 1px solid var(--border-soft); margin: 32px 0;
 
 .week-grid {
   display: grid;
-  grid-template-columns: repeat(7, 1fr);
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 8px;
   min-height: 320px;
 }
@@ -602,13 +542,11 @@ hr.sep { border: none; border-top: 1px solid var(--border-soft); margin: 32px 0;
 .add-session-btn.active:hover { background: rgba(255,107,53,0.14); }
 
 @media (max-width: 900px) {
-  .planning-layout { grid-template-columns: 1fr; }
-  .planning-sidebar { position: static; height: auto; max-height: 320px; border-right: none; border-bottom: 1px solid var(--border); }
-  .week-grid { grid-template-columns: repeat(4, 1fr); }
+  .week-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .plan-week-calendar { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
 @media (max-width: 600px) {
-  .week-grid { grid-template-columns: repeat(2, 1fr); }
+  .week-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .plan-week-calendar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .plan-week-controls { width: 100%; }
 
@@ -616,6 +554,20 @@ hr.sep { border: none; border-top: 1px solid var(--border-soft); margin: 32px 0;
   .chip-remove { padding: 8px; margin: -8px -8px -8px 0; font-size: 0.78rem; }
   .mcal-day { min-height: 64px; padding: 5px 4px; }
   button, .btn, .tab { min-height: 40px; }
+
+  /* Grille mois à 7 colonnes trop étroite pour "+ Séance" en entier : bouton icône seule. */
+  .plan-add-label { display: none; }
+  .plan-add-session { padding: 4px 2px; font-size: 0.9rem; font-weight: 700; }
+
+  /* Bandeau d'actions de semaine (type + nRun/nBike/nStrength + Préremplir/IA) : tout sur une
+     seule ligne plutôt que de retomber sur 2 lignes (select/inputs/boutons resserrés).
+     Préfixe .planning-page pour gagner en spécificité sur la règle de base (plus loin dans
+     le fichier, même spécificité sinon -> l'ordre source la ferait gagner). */
+  .planning-page .cycle-week-controls { flex-wrap: nowrap; gap: 4px; }
+  .planning-page .cycle-week-controls select,
+  .planning-page .cycle-week-controls input[type="number"] { padding: 3px 4px; font-size: 0.72rem; }
+  .planning-page .cycle-week-controls input[type="number"] { width: 26px; }
+  .planning-page .cycle-week-controls .btn-sm { padding: 4px 7px; font-size: 0.7rem; white-space: nowrap; }
 }
 
 
@@ -623,14 +575,14 @@ hr.sep { border: none; border-top: 1px solid var(--border-soft); margin: 32px 0;
 .month-nav { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
 .month-label { font-weight: 700; font-size: 1rem; text-transform: capitalize; min-width: 180px; }
 
-.mcal-header { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; margin-bottom: 4px; }
+.mcal-header { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; margin-bottom: 4px; }
 .mcal-dayname { text-align: center; font-size: 0.7rem; font-weight: 700; text-transform: uppercase; color: var(--text-dim); padding: 4px 0; }
 
 .mcal-week-block { margin-bottom: 10px; }
 .mcal-week-actions { padding: 8px 10px; background: var(--panel); border: 1px solid var(--border); border-bottom: none; border-radius: 8px 8px 0 0; transition: border-color 0.3s, box-shadow 0.3s; }
 .mcal-week-actions.flash { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(255,107,53,0.3); }
 .mcal-week-actions + .mcal-week { margin-top: 0; border: 1px solid var(--border); border-top: none; border-radius: 0 0 8px 8px; padding: 4px; }
-.mcal-week { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; margin-bottom: 4px; }
+.mcal-week { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; margin-bottom: 4px; }
 
 .mcal-day {
   background: var(--panel);
@@ -672,6 +624,8 @@ hr.sep { border: none; border-top: 1px solid var(--border-soft); margin: 32px 0;
 .session-chip.real[draggable="true"] { cursor: grab; user-select: none; -webkit-user-drag: element; touch-action: none; }
 .session-chip.edited { border-color: rgba(74,144,217,0.6); background: rgba(74,144,217,0.12); }
 .session-chip.to-delete { opacity: 0.5; text-decoration: line-through; }
+.chip-icon { flex-shrink: 0; }
+.chip-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1 1 auto; }
 .chip-dur { color: var(--text-dim); font-size: 0.68rem; }
 .chip-load { color: var(--accent-2); font-size: 0.68rem; margin-left: auto; }
 .chip-remove {
@@ -774,7 +728,7 @@ hr.sep { border: none; border-top: 1px solid var(--border-soft); margin: 32px 0;
 /* ── Intervalles paramétrables (séances qualité) ─────────────────── */
 .interval-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
   margin: 4px 0 6px;
 }

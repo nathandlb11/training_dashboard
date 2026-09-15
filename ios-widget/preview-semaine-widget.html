@@ -207,7 +207,7 @@ function badgeClass(status) {
 
 // Sport différencié par emoji (même convention que public/js/planning.js SPORT_ICONS/TYPE_MAP).
 const SPORT_TYPE_MAP = { WeightTraining: 'Strength', TrailRun: 'Run', VirtualRide: 'Ride', GravelRide: 'Ride', MountainBikeRide: 'Ride', OpenWaterSwim: 'Swim' };
-const SPORT_ICONS = { Run: '🏃', Ride: '🚴', Swim: '🏊', Strength: '🏋️', Hike: '🥾', Walk: '🚶' };
+const SPORT_ICONS = { Run: '🏃', Ride: '🚴', Swim: '🏊', Strength: '💪', Hike: '🥾', Walk: '🚶' };
 function sportIcon(type) {
   return SPORT_ICONS[SPORT_TYPE_MAP[type] || type] || '🎽';
 }
