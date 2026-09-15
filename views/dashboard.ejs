@@ -7,8 +7,11 @@
   <%- include('partials/nav') %>
 
   <main>
-    <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px;">
-      <h1 style="margin:0;">Training Load Dashboard</h1>
+    <div class="dash-header">
+      <div>
+        <h1>Training Load Dashboard</h1>
+        <p class="page-subtitle">Vue d'ensemble de la charge d'entraînement et de la forme.</p>
+      </div>
       <button type="button" class="btn-ghost" id="toggleNotesBtn" style="display:none;">🗒️ Afficher les notes</button>
     </div>
 
@@ -24,12 +27,10 @@
     <% } %>
 
     <% if (!apiKeyMissing && !error) { %>
-      <div class="card" id="filters-card">
-        <div class="filters">
-          <div class="field">
-            <label for="historyStart">Début d'analyse</label>
-            <input type="date" id="historyStart" value="<%= params.historyStart %>" />
-          </div>
+      <div class="toolbar" id="filters-card">
+        <div class="field">
+          <label for="historyStart">Début d'analyse</label>
+          <input type="date" id="historyStart" value="<%= params.historyStart %>" />
         </div>
       </div>
 

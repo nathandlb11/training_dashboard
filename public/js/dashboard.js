@@ -24,7 +24,7 @@
     });
   }
 
-  const SPORT_COLORS = ['#ff6b35', '#4a90d9', '#7b2d8e', '#35c46f', '#f5a623', '#e94f8a', '#3fbac2', '#c2c23f'];
+  const SPORT_COLORS = ['#ff6b35', '#4a90d9', '#a78bfa', '#35c46f', '#f5a623', '#ec4899', '#22d3ee', '#facc15'];
 
   // Bandes horizontales colorées pour chaque note Intervals.icu (s'étend jusqu'à la note suivante)
   const NOTE_BAND_COLORS = [
@@ -139,8 +139,8 @@
       {
         type: 'time',
         time: { unit: 'day', tooltipFormat: 'dd/MM/yyyy' },
-        ticks: { color: '#9aa7c2', maxRotation: 0 },
-        grid: { color: '#232c40' },
+        ticks: { color: '#8a91a3', maxRotation: 0 },
+        grid: { color: '#232838' },
       },
       extra || {}
     );
@@ -149,14 +149,35 @@
   // ------------------------------------------------------------
   // KPIs
   // ------------------------------------------------------------
+  const KPI_ICON = {
+    flame: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 17a2.5 2.5 0 0 0 2.5-2.5c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7.5 7.5 0 1 1-15 0c0-1.153.433-2.294 1-3 1.464-1.85 2.5-3.5 2.5-3.5"/></svg>',
+    clock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/></svg>',
+    mountain: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m8 3 4 8 5-5 5 15H2L8 3z"/></svg>',
+    check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><path d="m9 15 2 2 4-4"/></svg>',
+  };
+
   function renderKpis(data) {
     const k = data.kpis;
+    const items = [
+      { icon: 'flame', color: 'var(--accent)', label: 'Charge Foster', value: Math.round(k.totalLoad) },
+      { icon: 'clock', color: 'var(--accent-2)', label: 'Temps', value: k.totalTimeFmt },
+      { icon: 'mountain', color: 'var(--green)', label: 'D+', value: `${Math.round(k.totalDplus)} m` },
+      { icon: 'check', color: 'var(--orange)', label: 'Séances', value: k.sessions },
+    ];
     return `
       <div class="kpis">
-        <div class="kpi"><div class="label">Charge Foster</div><div class="value">${Math.round(k.totalLoad)}</div></div>
-        <div class="kpi"><div class="label">Temps</div><div class="value">${k.totalTimeFmt}</div></div>
-        <div class="kpi"><div class="label">D+</div><div class="value">${Math.round(k.totalDplus)} m</div></div>
-        <div class="kpi"><div class="label">Séances</div><div class="value">${k.sessions}</div></div>
+        ${items
+          .map(
+            (it) => `
+          <div class="kpi">
+            <div class="kpi-icon" style="--kpi-color:${it.color}">${KPI_ICON[it.icon]}</div>
+            <div>
+              <div class="label">${it.label}</div>
+              <div class="value">${it.value}</div>
+            </div>
+          </div>`
+          )
+          .join('')}
       </div>`;
   }
 
@@ -208,10 +229,10 @@
         interaction: { mode: 'index', intersect: false },
         scales: {
           x: baseTimeScale(),
-          y: { stacked: true, title: { display: true, text: 'Charge Foster', color: '#9aa7c2' }, ticks: { color: '#9aa7c2' }, grid: { color: '#232c40' }, afterFit(s) { s.width = 70; } },
+          y: { stacked: true, title: { display: true, text: 'Charge Foster', color: '#8a91a3' }, ticks: { color: '#8a91a3' }, grid: { color: '#232838' }, afterFit(s) { s.width = 70; } },
         },
         plugins: {
-          legend: { labels: { color: '#e7ecf5' } },
+          legend: { labels: { color: '#eef0f4' } },
           noteLines: { notes: data.notes || [] },
         },
       },
@@ -297,7 +318,7 @@
         maintainAspectRatio: false,
         interaction: { mode: 'x', intersect: false },
         plugins: {
-          legend: { labels: { color: '#e7ecf5' } },
+          legend: { labels: { color: '#eef0f4' } },
           noteLines: { notes: data.notes || [] },
           tooltip: {
             callbacks: {
@@ -314,7 +335,7 @@
         },
         scales: {
           x: baseTimeScale({ time: { unit: 'week', tooltipFormat: 'dd/MM/yyyy' } }),
-          y: { stacked: true, position: 'left', title: { display: true, text: `Km / D+ (÷${c.dplusScale})`, color: '#9aa7c2' }, ticks: { color: '#9aa7c2' }, grid: { color: '#232c40' }, afterFit(s) { s.width = 70; } },
+          y: { stacked: true, position: 'left', title: { display: true, text: `Km / D+ (÷${c.dplusScale})`, color: '#8a91a3' }, ticks: { color: '#8a91a3' }, grid: { color: '#232838' }, afterFit(s) { s.width = 70; } },
           y2: { display: false, position: 'right', title: { display: false, text: 'Heures' } },
         },
       },
@@ -397,7 +418,7 @@
         maintainAspectRatio: false,
         interaction: { mode: 'x', intersect: false },
         plugins: {
-          legend: { labels: { color: '#e7ecf5' } },
+          legend: { labels: { color: '#eef0f4' } },
           noteLines: { notes: data.notes || [] },
           tooltip: {
             callbacks: {
@@ -414,7 +435,7 @@
         },
         scales: {
           x: baseTimeScale({ time: { unit: 'week', tooltipFormat: 'dd/MM/yyyy' } }),
-          y: { stacked: true, position: 'left', title: { display: true, text: `Km / D+ (÷${c.dplusScale})`, color: '#9aa7c2' }, ticks: { color: '#9aa7c2' }, grid: { color: '#232c40' }, afterFit(s) { s.width = 70; } },
+          y: { stacked: true, position: 'left', title: { display: true, text: `Km / D+ (÷${c.dplusScale})`, color: '#8a91a3' }, ticks: { color: '#8a91a3' }, grid: { color: '#232838' }, afterFit(s) { s.width = 70; } },
           y2: { display: false, position: 'right', title: { display: false, text: 'Heures' } },
           y3: { display: false, position: 'right', title: { display: false, text: 'kJ' } },
         },
@@ -523,7 +544,7 @@
         responsive: true,
         maintainAspectRatio: false,
         plugins: {
-          legend: { labels: { color: '#e7ecf5', filter: (item) => item.text !== '' } },
+          legend: { labels: { color: '#eef0f4', filter: (item) => item.text !== '' } },
           noteLines: { notes: data.notes || [] },
           tooltip: {
             callbacks: {
@@ -559,14 +580,14 @@
         },
         scales: {
           x: baseTimeScale({ time: { unit: 'week', tooltipFormat: 'dd/MM/yyyy' } }),
-          y: { title: { display: true, text: 'ACWR', color: '#9aa7c2' }, ticks: { color: '#9aa7c2' }, grid: { color: '#232c40' }, afterFit(s) { s.width = 70; } },
+          y: { title: { display: true, text: 'ACWR', color: '#8a91a3' }, ticks: { color: '#8a91a3' }, grid: { color: '#232838' }, afterFit(s) { s.width = 70; } },
           yLoad: {
             stacked: true,
             position: 'right',
             beginAtZero: true,
             max: maxStack > 0 ? maxStack * 3 : undefined,
-            title: { display: true, text: 'Charge Foster / semaine', color: '#9aa7c2' },
-            ticks: { color: '#9aa7c2' },
+            title: { display: true, text: 'Charge Foster / semaine', color: '#8a91a3' },
+            ticks: { color: '#8a91a3' },
             grid: { drawOnChartArea: false },
             afterFit(s) { s.width = 70; },
           },
