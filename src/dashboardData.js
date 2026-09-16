@@ -71,8 +71,9 @@ function buildForecast(rawFutureEvents) {
     totalPlannedByDate.set(w.date, (totalPlannedByDate.get(w.date) || 0) + load);
   }
 
-  // Exclure les séances déjà liées à une activité réelle (activity_id présent = réalisée)
-  const workouts = rows.filter((r) => r.date && ['WORKOUT', 'PLAN'].includes(r.category) && !r.activity_id);
+  // Exclure les séances déjà liées à une activité réelle (paired_activity_id présent = réalisée ;
+  // Intervals.icu n'expose PAS de champ `activity_id` sur les événements calendrier)
+  const workouts = rows.filter((r) => r.date && ['WORKOUT', 'PLAN'].includes(r.category) && !r.paired_activity_id);
   let forecastByDate = new Map();
   const planRunWeekly = new Map();
   const planBikeWeekly = new Map();
@@ -148,8 +149,8 @@ function buildForecast(rawFutureEvents) {
 /**
  * Séances (planifiées et/ou réelles) de la semaine en cours (lundi -> dimanche), pour un widget
  * de suivi d'avancement. Une séance planifiée est "réalisée" si son événement calendrier porte un
- * `activity_id` (lien Intervals.icu vers l'activité réelle) ; les activités réelles de la semaine
- * non liées à un événement planifié sont ajoutées à part (séances "hors plan").
+ * `paired_activity_id` (lien Intervals.icu vers l'activité réelle) ; les activités réelles de la
+ * semaine non liées à un événement planifié sont ajoutées à part (séances "hors plan").
  */
 function buildCurrentWeekSessions(rawFutureEvents, df) {
   const today = todayIso();
@@ -164,7 +165,7 @@ function buildCurrentWeekSessions(rawFutureEvents, df) {
 
   const dfById = new Map(df.filter((a) => a.id != null).map((a) => [String(a.id), a]));
   const linkedActivityIds = new Set(
-    plannedRows.filter((e) => e.activity_id != null).map((e) => String(e.activity_id))
+    plannedRows.filter((e) => e.paired_activity_id != null).map((e) => String(e.paired_activity_id))
   );
 
   const plannedSessions = plannedRows.map((e) => {
@@ -172,7 +173,7 @@ function buildCurrentWeekSessions(rawFutureEvents, df) {
     const movingTime = NUM(e.moving_time, 0);
     const rpe = isRace ? sessionLoad.race.rpe : effectiveRpeForPlanned(e.type, e.name, e.icu_rpe);
     const plannedLoad = (rpe * movingTime) / 60;
-    const real = e.activity_id != null ? dfById.get(String(e.activity_id)) : null;
+    const real = e.paired_activity_id != null ? dfById.get(String(e.paired_activity_id)) : null;
     const done = !!real;
 
     let status;
@@ -465,7 +466,7 @@ async function buildDashboardData({
     const validChronicToToday = loadMetricsToToday.filter((m) => m.chronic_load_4w != null && m.chronic_load_4w > 0);
     currentChronicLoad = validChronicToToday.length ? validChronicToToday.at(-1).chronic_load_4w : null;
   }
-  // buildForecast n'exclut de forecastDaily que les séances déjà liées via activity_id, mais ce
+  // buildForecast n'exclut de forecastDaily que les séances déjà liées via paired_activity_id, mais ce
   // lien Intervals.icu n'est pas toujours fait (délai de sync, sport différent du prévu, séance
   // avancée/reculée...). Sans ça, une séance réellement faite un jour >= aujourd'hui reste comptée
   // en "restant" EN PLUS de sa charge réelle déjà comptabilisée -> restante/projetée surestimées.

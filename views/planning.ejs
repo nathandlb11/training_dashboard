@@ -20,17 +20,20 @@
             <span id="pendingCount"></span>
             <div style="display:flex;gap:8px;align-items:center;">
               <button class="btn-ghost" id="clearPendingBtn">Tout annuler</button>
-              <button id="sendPendingBtn">🚀 Envoyer à Intervals.icu</button>
+              <button id="sendPendingBtn">Envoyer à Intervals.icu</button>
             </div>
           </div>
 
           <div class="pmc-sticky-wrap" id="pmcStickyWrap">
-            <div class="card" style="padding:16px 18px;margin-bottom:0;">
+            <div class="card" id="chartCard" style="padding:16px 18px;margin-bottom:0;">
               <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
                 <h3 style="margin:0;font-size:1rem;">Charge hebdo Foster &amp; ACWR</h3>
+                <button class="btn-ghost btn-sm" id="toggleChartBtn" style="font-size:0.78rem;">📉 Masquer le graphique</button>
               </div>
-              <div class="chart-wrap" style="height:240px;"><canvas id="pmc_chart"></canvas></div>
-              <p id="cycleSummary" class="caption" style="margin:8px 0 0;"></p>
+              <div id="chartBody">
+                <div class="chart-wrap" style="height:240px;"><canvas id="pmc_chart"></canvas></div>
+                <p id="cycleSummary" class="caption" style="margin:8px 0 0;"></p>
+              </div>
             </div>
             <div id="sendResult" style="margin-top:10px;"></div>
           </div>
@@ -40,6 +43,7 @@
             <span id="monthLabel" class="month-label"></span>
             <button class="icon-btn" id="nextMonth">›</button>
             <button class="btn-ghost" id="todayBtn" style="margin-left:8px;font-size:0.82rem;">Aujourd'hui</button>
+            <button class="btn-ghost" id="exportCsvBtn" style="margin-left:auto;font-size:0.82rem;">📥 Exporter CSV</button>
           </div>
           <div id="monthGrid"></div>
       </div>
@@ -83,10 +87,10 @@
 - 2m 50-60% FTP
 
 - Retour au calme 10m 50-60% LTHR"></textarea>
-        <p class="caption" style="margin:4px 0 0;">La durée et la charge sont calculées automatiquement à partir de la description. Une ligne = une étape : <code>- &lt;libellé&gt; &lt;durée&gt; &lt;bas&gt;-&lt;haut&gt;% &lt;ZONE&gt;</code> (durée en <code>h</code>/<code>m</code>/<code>s</code>, ex. <code>1h20m</code>, <code>15m</code>, <code>30s</code>). Une ligne <code>Nx</code> répète les étapes de son bloc (séparez les blocs par une ligne vide).</p>
       </div>
+      <div id="editStepChart" class="step-chart"></div>
       <p id="editComputedInfo" class="caption" style="margin:-4px 0 6px;font-weight:600;"></p>
-      <p id="editRealNotice" class="caption" style="display:none;margin:-4px 0 6px;">Cette séance est déjà sur Intervals.icu : la modification sera mise en attente et ne sera envoyée qu'après confirmation.</p>
+      <p id="editRealNotice" class="caption" style="display:none;margin:-4px 0 6px;"
       <div class="modal-actions">
         <button class="btn-ghost" id="editCancel">Annuler</button>
         <button id="editSave">Enregistrer</button>
@@ -111,7 +115,7 @@
       </div>
       <div class="modal-actions">
         <button class="btn-ghost" id="aiPlanCancel">Annuler</button>
-        <button id="aiPlanGenerate">✨ Générer</button>
+        <button id="aiPlanGenerate">Générer</button>
       </div>
     </div>
   </div>
@@ -129,6 +133,29 @@
     </div>
   </div>
 
+  <!-- Modal : récap d'une séance passée (réalisée, manquée ou hors plan) -->
+  <div id="recapModal" class="modal-overlay">
+    <div class="modal-dialog">
+      <p class="modal-title" id="recapTitle"></p>
+      <div id="recapBody"></div>
+      <div class="modal-actions" style="justify-content:space-between;">
+        <button class="btn-ghost" id="recapAdvancedBtn" style="display:none;">📊 Analyse avancée</button>
+        <button class="btn-ghost" id="recapClose">Fermer</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal : analyse avancée par intervalle d'une activité -->
+  <div id="intervalsModal" class="modal-overlay">
+    <div class="modal-dialog" style="width:min(90vw, 780px);">
+      <p class="modal-title" id="intervalsTitle">Analyse avancée</p>
+      <div id="intervalsBody" style="max-height:60vh;overflow:auto;"></div>
+      <div class="modal-actions">
+        <button class="btn-ghost" id="intervalsClose">Fermer</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     window.__PLANNING_BOOTSTRAP__ = <%- JSON.stringify({
       athleteId,
@@ -137,13 +164,10 @@
       calendarStart,
       calendarEnd,
       historyStart,
-      historyEnd,
-      sessionLoadConfig
+      historyEnd
     }) %>;
   </script>
   <script src="/vendor/format.js"></script>
-  <script src="/vendor/sessionLibrary.js"></script>
-  <script src="/vendor/planBuilder.js"></script>
   <script src="/js/planning.js?v=<%= Date.now() %>"></script>
 </body>
 </html>

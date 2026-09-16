@@ -162,6 +162,28 @@ async function fetchWorkoutFolders(apiKey, athleteId = '0') {
   return folders;
 }
 
+/** Récupère le détail par intervalle (splits/laps calculés par Intervals.icu) d'une activité réelle. */
+async function fetchActivityIntervals(apiKey, activityId) {
+  const cacheKey = ['activity-intervals', apiKey, activityId];
+  const cached = cache.get(cacheKey);
+  if (cached !== undefined) return cached;
+
+  const result = await intervalsApiRequest('GET', `/activity/${activityId}/intervals`, apiKey);
+  cache.set(cacheKey, result);
+  return result;
+}
+
+/** Récupère le profil de l'athlète (contient notamment `icu_weight`, en kg). */
+async function fetchAthleteProfile(apiKey, athleteId = '0') {
+  const cacheKey = ['athlete-profile', apiKey, athleteId];
+  const cached = cache.get(cacheKey);
+  if (cached !== undefined) return cached;
+
+  const result = await intervalsApiRequest('GET', `/athlete/${athleteId}`, apiKey);
+  cache.set(cacheKey, result);
+  return result;
+}
+
 module.exports = {
   intervalsApiRequest,
   fetchAthleteSummary,
@@ -172,4 +194,6 @@ module.exports = {
   deleteCalendarEvent,
   fetchWorkoutFolders,
   fetchWorkoutLibrary,
+  fetchActivityIntervals,
+  fetchAthleteProfile,
 };

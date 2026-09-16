@@ -232,6 +232,14 @@ function effectiveRpeForPlanned(sport, name, icuRpe) {
   return explicit && explicit > 0 ? explicit : rpeForPlanned(sport, name);
 }
 
+/** Sport (Run/Ride) correspondant à un type Intervals.icu de séance de bibliothèque, ou null (ex: Swim). */
+function sportForWorkoutType(type) {
+  const s = normalizeSportKey(type);
+  if (FORECAST_RUN_TYPES.has(s)) return 'Run';
+  if (FORECAST_BIKE_TYPES.has(s)) return 'Ride';
+  return null;
+}
+
 /**
  * Étend le calcul ACWR avec les séances planifiées (passées et futures).
  * futureDaily : [{date, foster_load}] issu des événements WORKOUT/PLAN/RACE.
@@ -294,4 +302,5 @@ module.exports = {
   FORECAST_RUN_TYPES,
   FORECAST_BIKE_TYPES,
   normalizeSportKey,
+  sportForWorkoutType,
 };

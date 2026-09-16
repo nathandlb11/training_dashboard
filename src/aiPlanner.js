@@ -1,83 +1,84 @@
 'use strict';
 
 const axios = require('axios');
+const { effectiveRpeForPlanned, sportForWorkoutType } = require('./calculations');
+const { parseDescriptionDurationMinutes, hasRepeatBlock, setDescriptionReps, scaleDescriptionDuration } = require('./format');
 
 const PROVIDER = (process.env.AI_PROVIDER || 'anthropic').toLowerCase();
 const VALID_SPORTS = new Set(['Run', 'Ride', 'Strength']);
 
-const SYSTEM_PROMPT = `Tu es un coach expert en entraînement d'endurance (course à pied, vélo, musculation),
-appliquant une méthodologie de gestion de charge structurée. Tu peux coacher n'importe quel athlète
-d'endurance amateur confirmé (trail, route, triathlon) selon cette philosophie — les paramètres précis de
-chaque athlète (FTP, allures, objectifs, contraintes) te sont fournis en contexte à chaque appel, ainsi
-qu'une charge hebdomadaire cible déjà déterminée en amont (tu n'as pas à la recalculer, seulement à la
-répartir en séances cohérentes).
+/** Décrit une séance de la bibliothèque Intervals.icu (durée/RPE) pour le prompt IA ; signale les
+ * séances de qualité (intervalles), seules dont l'IA peut aussi ajuster le nombre de reps. */
+function describeWorkout(w) {
+  const durationMin = w.moving_time > 0 ? Math.round(w.moving_time / 60) : null;
+  const rpe = effectiveRpeForPlanned(w.type, w.name, w.icu_rpe);
+  const durationLabel = durationMin ? durationMin + 'min' : 'durée non renseignée';
+  const tag = hasRepeatBlock(w.description) ? ' (qualité : durée/reps ajustables)' : ' (durée ajustable)';
+  return `- ${w.name} : ${durationLabel}, RPE ${rpe}${tag}`;
+}
 
-MÉTHODE DE CHARGE
-- Foster (session-RPE) : charge (AU) = durée (min) x intensité perçue (échelle CR-10, 0-10).
-- La charge hebdomadaire cible, le nombre de séances et le type de semaine (charge/décharge/choc) te sont donnés en contexte :
-  construis les séances pour t'en approcher, en jouant sur la durée ET l'intensité.
-RÈGLES PAR SPORT
+/** Construit le bloc de prompt listant, par sport, les séances réellement disponibles dans la
+ * bibliothèque Intervals.icu du compte (aucune séance locale ni inventée). */
+function buildLibraryPromptBlock(workoutLibrary) {
+  const runs = (workoutLibrary || []).filter((w) => sportForWorkoutType(w.type) === 'Run');
+  const rides = (workoutLibrary || []).filter((w) => sportForWorkoutType(w.type) === 'Ride');
 
-Vélo :
-- Toutes les séances vélo sont en endurance pure, RPE 2 (aucune séance qualité/intensité à vélo).
-- Piloter en % de FTP si une FTP est fournie en contexte (zone endurance ~56-75% FTP), plutôt qu'en %FC.
+  if (!runs.length && !rides.length) {
+    return "(Bibliothèque Intervals.icu vide ou indisponible pour la course à pied/vélo — aucune séance n'est disponible, propose uniquement de la musculation.)";
+  }
 
-Course à pied :
-- Minimum par semaine : 1 séance qualité, 1 sortie longue, 1 footing.
-- On peut monter jusqu'à 2 séances qualité maximum par semaine, à condition qu'elles ciblent des
-  intensités différentes (ex. tempo, seuil, VMA) — jamais deux séances qualité sur la même filière la
-  même semaine.
-- Pour augmenter légèrement la charge sans ajouter de séance qualité, on peut intégrer un peu d'actif
-  (accélérations, relances) dans la sortie longue plutôt que d'ajouter une 3e séance qualité.
-- Footing : RPE 3, durée toujours arrondie par tranche de 5 minutes (25', 30', 35'...).
-- Le volume horaire course à pied ne doit jamais descendre sous 60-70% du volume horaire total de la
-  semaine (tous sports confondus) — c'est une contrainte dure, pas une préférence.
+  const parts = [];
+  if (runs.length) parts.push('Course à pied :', ...runs.map(describeWorkout));
+  if (runs.length && rides.length) parts.push('');
+  if (rides.length) parts.push('Vélo :', ...rides.map(describeWorkout));
+  return parts.join('\n');
+}
 
-Musculation :
-- RPE 7, durée généralement 30-40 minutes maximum (rarement plus).
+/** Construit le prompt système en y interpolant la bibliothèque Intervals.icu réelle du compte
+ * (récupérée à chaque appel via l'API Intervals.icu, jamais une liste locale figée). */
+function buildSystemPrompt(workoutLibrary) {
+  return `Tu es un coach expert en entraînement d'endurance (course à pied, trail, vélo, musculation).
+La charge hebdomadaire cible t'est déjà donnée (à répartir en séances, pas à recalculer).
 
-STRUCTURATION DE LA SEMAINE
-- Ne jamais enchaîner deux séances intenses (RPE ≥6) sur deux jours consécutifs.
-- La sortie longue est la séance prioritaire protégée : en cas de besoin de réduire la charge, réduire
-  d'abord d'autres séances, jamais la sortie longue.
-- Le repos complet un ou plusieurs jours est autorisé si besoin (charge cible faible, décharge...).
-- Les séances doublées sont autorisées si besoin (notamment muscu associée à du vélo ou à un footing le
-  même jour) pour atteindre la charge cible sans surcharger une séance unique.
+BIBLIOTHÈQUE (course à pied/vélo) — choisis CHAQUE séance UNIQUEMENT parmi celles-ci, nom EXACT,
+INTERDICTION TOTALE d'en inventer une hors liste :
+${buildLibraryPromptBlock(workoutLibrary)}
+Durée ajustable ("durationMin") pour toutes ; les séances "(qualité)" acceptent aussi "reps" (nombre
+d'intervalles), l'échauffement et le retour au calme suivent proportionnellement. Musculation (hors
+bibliothèque) : nom libre, 30-40min, RPE 7.
 
-CONTEXTE FOURNI
-On te fournit le contexte d'une semaine à planifier (charge chronique actuelle, type de semaine visé, charge
-hebdomadaire cible, nombre de séances souhaité par sport, historique récent des charges, paramètres de
-l'athlète — FTP, allures, objectifs de course — et d'éventuelles contraintes en texte libre). Propose une
-répartition de séances sur les 7 jours de la semaine (lundi=1 … dimanche=7) qui :
-- respecte au mieux les contraintes exprimées par l'athlète (jours indisponibles, objectifs de course,
-  fatigue/blessure, etc.) ainsi que le commentaire ponctuel donné pour cette semaine précise ;
-- respecte les règles par sport ci-dessus (RPE, durées, minimums/maximums) ;
-- vise la charge hebdomadaire cible en ajustant durée et intensité de chaque séance ;
-- respecte le pairing dur/facile et la protection de la sortie longue ;
-- reste réaliste pour un sportif amateur confirmé.
+MÉTHODE & RÈGLES
+- Foster : charge (AU) = durée (min) x RPE (1-10). Choc : week-end choc = 2 sorties longues consécutives.
+- Course à pied, à partir de 3 séances : minimum obligatoire 1 footing, 1 sortie longue (durée ≥ footing
+  +50%, ou une sortie longue avec blocs actifs) et 1 qualité (non obligatoire si décharge ; max 2
+  qualités, filières différentes) ; en dessous de 3, pas d'obligation de mix. Volume horaire course
+  ≥60-70% du volume total (sauf décharge : réduit).
+- Vélo : toujours endurance pure.
+- Sorties longues en priorité le week-end. Jamais 2 séances intenses (RPE ≥6) à la suite ; jamais
+  d'intensité au lendemain d'un renfo ou d'une sortie longue (repos ou RPE ≤4 ce jour-là) ; jamais de
+  renfo la veille ou le lendemain d'une sortie longue.
+- Répartis les jours de repos selon le nombre de séances (moins de séances → plus de repos, bien
+  répartis, pas empilés). Séances doublées possibles si besoin (ex. muscu + vélo/footing le même jour).
 
-Réponds UNIQUEMENT avec un objet JSON valide, sans balises markdown ni texte autour, au format exact :
+Tu reçois en contexte : charge chronique, type de semaine, charge hebdo cible, nombre de séances par
+sport, historique récent, contraintes en texte libre. Propose une répartition sur 7 jours
+(lundi=1…dimanche=7) respectant tout ce qui précède.
+
+Réponds UNIQUEMENT avec un objet JSON valide, sans markdown ni texte autour :
 {
   "sessions": [
-    { "sport": "Run" | "Ride" | "Strength", "name": string, "dayOfWeek": 1-7, "durationMin": number, "rpe": 1-10, "description": string }
+    { "sport": "Run" | "Ride" | "Strength", "template": string, "name": string, "dayOfWeek": 1-7,
+      "durationMin": number, "reps": number }
   ],
   "rationale": string
 }
-Le champ "description" est obligatoire, notamment pour les séances qualité/intervalles :
-l'appli recalcule ensuite la durée ET la charge Foster à partir de ce texte dès que la séance est modifiée
-manuellement, donc il doit être strictement au format Intervals.icu suivant :
-- Chaque étape est une ligne commençant par "- ", au format "- <libellé optionnel> <durée> <bas>-<haut>%
-  <ZONE>" (ex: "- Echauffement 15m 70-80% LTHR", "- 6m 94-100% LTHR"). <ZONE> est l'unité de pilotage
-  (LTHR, FTP, Pace, HR...). La durée s'exprime en h/m/s, combinables (ex: 1h20m, 15m, 30s).
-- Pour une répétition, ajoute juste avant les lignes concernées une ligne "Nx" ou "<Label> Nx" (ex: "4x"
-  ou "Seuil 4x"), qui ne commence PAS par "- ".
-- Sépare TOUJOURS les blocs (échauffement / bloc de répétition / retour au calme) par une ligne vide :
-  c'est ce qui délimite la fin d'une répétition (les lignes "- " suivant un bloc vide ne sont plus répétées).
-- La somme des durées de toutes les étapes, répétitions comprises, DOIT être égale à durationMin.
-Exemple pour une séance de 45 minutes avec un échauffement de 15min, 4 répétitions de 3min/2min et un
-retour au calme de 10min :
-"- Echauffement 15m 70-80% LTHR\n\n4x\n- 3m 100-110% FTP\n- 2m 50-60% FTP\n\n- Retour au calme 10m 50-60% LTHR"
-Le champ "rationale" est une courte explication (2-3 phrases) des choix effectués, en français.`;
+"template" = nom EXACT d'une séance de la bibliothèque ci-dessus (Run/Ride ; omis pour la musculation) —
+RAPPEL : jamais de séance hors bibliothèque. "durationMin" ajuste la durée (ou celle d'une séance de
+musculation) ; "reps" ajuste le nombre d'intervalles d'une qualité (ignoré sinon). "name" = libellé
+affiché. "rationale" doit LISTER pour chaque séance son jour et le nom EXACT de la séance utilisée (ex :
+"Lundi : EF / Footing (Run) ; Mercredi : Tempo (Run) ; ...") suivi d'une courte justification — cela
+permet de vérifier qu'aucune séance n'a été inventée hors bibliothèque.`;
+}
 
 /** Anthropic (Claude) — nécessite un compte payant / crédits. */
 async function callAnthropic(system, userContent) {
@@ -138,11 +139,15 @@ async function callGroq(system, userContent) {
   // useJsonMode force un JSON strict côté Groq ; certains modèles (ex: modèles "raisonneurs" gpt-oss)
   // échouent cette validation (json_validate_failed) — on retombe alors sur un prompt JSON classique,
   // notre propre parsePlanJson sachant déjà extraire l'objet JSON d'une réponse texte libre.
+  // Les modèles "gpt-oss" (raisonneurs) peuvent aussi consommer tout le budget max_tokens en tokens de
+  // raisonnement et ne jamais émettre de contenu (finish_reason "length", content vide) : reasoning_effort
+  // "low" limite ce raisonnement pour laisser de la place à la vraie réponse.
   const requestBody = (model, useJsonMode) => ({
     model,
     temperature: 0.4,
     max_tokens: 3000,
     ...(useJsonMode ? { response_format: { type: 'json_object' } } : {}),
+    ...(/gpt-oss/.test(model) ? { reasoning_effort: 'low' } : {}),
     messages: [
       { role: 'system', content: system },
       { role: 'user', content: userContent },
@@ -243,25 +248,109 @@ function parsePlanJson(text) {
 }
 
 /** Valide et normalise le plan renvoyé par l'IA vers un format exploitable côté client. */
-function normalizePlan(plan) {
+function clamp(value, lo, hi) {
+  return Math.min(hi, Math.max(lo, value));
+}
+
+/** Construit une séance concrète à partir du choix de l'IA — une séance reprise telle quelle de la
+ * bibliothèque Intervals.icu, ou une séance libre pour la musculation. */
+function buildSessionFromAiChoice(s, workoutLibrary) {
+  if (!s || !VALID_SPORTS.has(s.sport)) return null;
+  const dayOfWeek = clamp(Math.round(Number(s.dayOfWeek) || 1), 1, 7);
+
+  if (s.sport === 'Strength') {
+    return {
+      sport: 'Strength',
+      name: String(s.name || 'Musculation').slice(0, 120),
+      dayOfWeek,
+      durationMin: clamp(Math.round(Number(s.durationMin) || 35), 15, 60),
+      rpe: 7,
+      description: '',
+    };
+  }
+
+  const workout = (workoutLibrary || []).find((w) => sportForWorkoutType(w.type) === s.sport && w.name === s.template);
+  if (!workout) return null; // séance hors bibliothèque : ignorée plutôt qu'inventée.
+
+  // Durée ajustable pour toute séance (footing/sortie longue/qualité) ; nombre d'intervalles
+  // ajustable seulement pour les qualités (bloc de répétition), échauffement/retour au calme suivent
+  // proportionnellement via scaleDescriptionDuration.
+  let description = workout.description || '';
+  if (Number(s.reps) > 0 && hasRepeatBlock(description)) {
+    description = setDescriptionReps(description, clamp(Math.round(Number(s.reps)), 1, 20));
+  }
+  if (Number(s.durationMin) > 0) {
+    description = scaleDescriptionDuration(description, clamp(Math.round(Number(s.durationMin)), 10, 240));
+  }
+
+  const parsedDuration = parseDescriptionDurationMinutes(description);
+  const fallbackDuration = workout.moving_time > 0 ? Math.round(workout.moving_time / 60) : 0;
+  const durationMin = parsedDuration > 0 ? parsedDuration : fallbackDuration;
+
+  return {
+    sport: s.sport,
+    // Nom toujours celui, exact, de la bibliothèque Intervals.icu — jamais celui (parfois
+    // fantaisiste) proposé par l'IA, sinon une séance légitime peut avoir l'air d'une séance inventée.
+    name: workout.name,
+    dayOfWeek,
+    durationMin,
+    rpe: effectiveRpeForPlanned(workout.type, workout.name, workout.icu_rpe),
+    description,
+  };
+}
+
+const LONG_SESSION_NAMES = new Set(['Sortie longue']);
+
+/** Filet de sécurité : si l'IA n'a pas respecté la consigne "pas de renfo la veille/le lendemain d'une
+ * sortie longue", décale le renfo fautif vers un jour compatible plutôt que de compter sur le prompt seul. */
+function enforceStrengthSpacing(sessions) {
+  const longDays = sessions.filter((s) => LONG_SESSION_NAMES.has(s.name)).map((s) => s.dayOfWeek);
+  if (!longDays.length) return sessions;
+
+  const conflicts = (day) => longDays.some((d) => Math.abs(d - day) === 1);
+  const usedDays = new Set(sessions.map((s) => s.dayOfWeek));
+
+  for (const s of sessions) {
+    if (s.sport !== 'Strength' || !conflicts(s.dayOfWeek)) continue;
+    const candidates = [1, 2, 3, 4, 5, 6, 7].filter((d) => !conflicts(d) && !longDays.includes(d));
+    const chosen = candidates.find((d) => !usedDays.has(d)) ?? candidates[0];
+    if (chosen && chosen !== s.dayOfWeek) {
+      usedDays.delete(s.dayOfWeek);
+      s.dayOfWeek = chosen;
+      usedDays.add(chosen);
+    }
+  }
+  return sessions;
+}
+
+const DAY_NAMES = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'];
+
+/** Résumé déterministe (pas basé sur ce que l'IA prétend) des séances réellement retenues — sert de preuve
+ * qu'aucune n'est hors bibliothèque, puisque buildSessionFromAiChoice ne laisse passer que des séances
+ * réelles de la bibliothèque Intervals.icu (ou de la musculation libre). */
+function summarizeSessions(sessions) {
+  return sessions
+    .slice()
+    .sort((a, b) => a.dayOfWeek - b.dayOfWeek)
+    .map((s) => `${DAY_NAMES[s.dayOfWeek - 1]} : ${s.name} (${s.sport}, ${s.durationMin}min)`)
+    .join(' ; ');
+}
+
+function normalizePlan(plan, workoutLibrary) {
   if (!plan || !Array.isArray(plan.sessions)) {
     throw new Error("Réponse IA non conforme (champ 'sessions' manquant).");
   }
 
-  const sessions = plan.sessions
-    .filter((s) => s && VALID_SPORTS.has(s.sport))
-    .map((s) => ({
-      sport: s.sport,
-      name: String(s.name || `${s.sport} — séance`).slice(0, 120),
-      dayOfWeek: Math.min(7, Math.max(1, Math.round(Number(s.dayOfWeek) || 1))),
-      durationMin: Math.min(600, Math.max(5, Math.round(Number(s.durationMin) || 30))),
-      rpe: Math.min(10, Math.max(1, Math.round(Number(s.rpe) || 4))),
-      description: typeof s.description === 'string' ? s.description : '',
-    }));
+  const sessions = plan.sessions.map((s) => buildSessionFromAiChoice(s, workoutLibrary)).filter(Boolean);
 
   if (!sessions.length) throw new Error("L'IA n'a proposé aucune séance exploitable.");
 
-  return { sessions, rationale: typeof plan.rationale === 'string' ? plan.rationale : '' };
+  enforceStrengthSpacing(sessions);
+
+  const aiRationale = typeof plan.rationale === 'string' ? plan.rationale.trim() : '';
+  const rationale = summarizeSessions(sessions) + '.' + (aiRationale ? ` ${aiRationale}` : '');
+
+  return { sessions, rationale };
 }
 
 /** Demande à l'IA (Anthropic/Groq/Ollama selon AI_PROVIDER) de proposer une semaine cohérente (charge, ACWR, contraintes). */
@@ -276,6 +365,7 @@ async function generateAiWeekPlan({
   constraints,
   comment,
   recentWeeks,
+  workoutLibrary,
 }) {
   const context = {
     semaine_du: weekStart,
@@ -290,8 +380,8 @@ async function generateAiWeekPlan({
   };
   const userContent = `Propose la répartition des séances pour cette semaine, à partir du contexte suivant (JSON) :\n${JSON.stringify(context, null, 2)}`;
 
-  const text = await callAiProvider(SYSTEM_PROMPT, userContent);
-  return normalizePlan(parsePlanJson(text));
+  const text = await callAiProvider(buildSystemPrompt(workoutLibrary), userContent);
+  return normalizePlan(parsePlanJson(text), workoutLibrary);
 }
 
 module.exports = { generateAiWeekPlan };

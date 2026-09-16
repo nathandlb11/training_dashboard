@@ -12,9 +12,17 @@
     historyStart: document.getElementById('historyStart'),
     content: document.getElementById('dashboard-content'),
     toggleNotesBtn: document.getElementById('toggleNotesBtn'),
+    exportCsvBtn: document.getElementById('exportCsvBtn'),
   };
 
   if (!els.content) return; // page en erreur / clé API manquante
+
+  if (els.exportCsvBtn) {
+    els.exportCsvBtn.addEventListener('click', () => {
+      const qs = new URLSearchParams(currentParams()).toString();
+      window.location.href = `/api/dashboard/export-csv?${qs}`;
+    });
+  }
 
   if (els.toggleNotesBtn) {
     els.toggleNotesBtn.addEventListener('click', () => {

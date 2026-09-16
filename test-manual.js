@@ -1,8 +1,6 @@
 'use strict';
 
 const { prepareActivities, dailyLoad, dailyLoadBySport, calculateLoadMetrics, calculatePlanningTargets, calculateForecastAcwr, rpeForPlanned } = require('./src/calculations');
-const { buildSessionDescription, SESSION_LIBRARY } = require('./src/sessionLibrary');
-const { buildTrainingPlan } = require('./src/planBuilder');
 const { fmtTime, fmtMinutes, fmtIntervalsDuration } = require('./src/format');
 const { weekStartMonday, todayIso, addDaysIso } = require('./src/dateUtils');
 
@@ -57,29 +55,6 @@ console.assert(forecast.some((w) => w.is_forecast), 'au moins une semaine foreca
 
 console.log('rpeForPlanned Run "EF":', rpeForPlanned('Run', 'CAP — EF'));
 console.log('rpeForPlanned Ride:', rpeForPlanned('Ride', 'Sortie'));
-
-// -------------------- Session library --------------------
-const tpl = { ...SESSION_LIBRARY.Run['Seuil'] };
-const { description, durationMin } = buildSessionDescription(tpl);
-console.log('--- Description Seuil ---');
-console.log(description);
-console.log('durée totale (min):', durationMin);
-console.assert(durationMin > 0, 'durée générée doit être positive');
-
-const simpleTpl = { ...SESSION_LIBRARY.Run['EF / Footing'] };
-console.log('--- Description EF ---');
-console.log(buildSessionDescription(simpleTpl).description);
-
-// -------------------- Plan builder --------------------
-const plan = buildTrainingPlan({ chronicLoad: planningTargets.chronic, planningType: 'Charge', nRun: 5, nBike: 2, nStrength: 1 });
-console.log('--- Plan (Charge, 5/2/1) ---');
-console.log(JSON.stringify(plan, null, 2));
-console.assert(plan.sessions.length === 8, 'nombre de séances attendu = 5+2+1');
-
-const plan6 = buildTrainingPlan({ chronicLoad: planningTargets.chronic, planningType: 'Récupération', nRun: 6, nBike: 1, nStrength: 0 });
-console.log('--- Plan (Récup, 6/1/0) ---');
-console.log(JSON.stringify(plan6.sessions.map((s) => s.seance)));
-console.assert(plan6.sessions.length === 7, 'nombre de séances attendu = 6+1+0');
 
 // -------------------- Format --------------------
 console.log(fmtTime(3725), fmtMinutes(95), fmtIntervalsDuration(20.5));

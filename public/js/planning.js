@@ -1,4 +1,4 @@
-/* global Chart, Format, SessionLibrary, PlanBuilder */
+/* global Chart, Format */
 (function () {
   'use strict';
 
@@ -10,9 +10,7 @@
     if (el) el.innerHTML = `<div class="alert alert-error" style="margin:10px;font-size:0.8rem;">JS Error: ${e.message}<br>${e.filename}:${e.lineno}</div>`;
   });
 
-  const { SESSION_LIBRARY, buildSessionDescription } = SessionLibrary;
-  const { fmtMinutes, parseDescriptionDurationMinutes } = Format;
-  const { buildTrainingPlan } = PlanBuilder;
+  const { fmtMinutes, fmtTime, parseDescriptionDurationMinutes, parseDescriptionSteps } = Format;
 
   // ── Helpers ────────────────────────────────────────────────────
   const todayIso = () => new Date().toISOString().slice(0, 10);
@@ -45,12 +43,30 @@
   const sportIcon = (t) => SPORT_ICONS[SPORT_TYPE_MAP[t] || t] || '🎽';
   const CHART_HORIZON_WEEKS = 8; // horizon fixe du graphique charge/ACWR (plus de réglage utilisateur)
 
+  /** Code couleur du % de complétion de charge (prévue vs réelle) : <80% sous-réalisée, 80-120% dans la cible, >120% sur-réalisée. */
+  const completionColorClass = (pct) => {
+    if (pct == null || !Number.isFinite(pct)) return '';
+    if (pct < 80) return 'pct-low';
+    if (pct <= 120) return 'pct-ok';
+    return 'pct-high';
+  };
+
+  /** Vitesse en m/s (champ Intervals.icu `average_speed`) -> allure "min:ss/km". */
+  const fmtPaceFromSpeed = (speedMs) => {
+    if (!speedMs || !Number.isFinite(speedMs) || speedMs <= 0) return null;
+    const secPerKm = 1000 / speedMs;
+    const min = Math.floor(secPerKm / 60);
+    const sec = Math.round(secPerKm % 60);
+    return `${min}:${String(sec).padStart(2, '0')}/km`;
+  };
+
   // ── State ──────────────────────────────────────────────────────
   let athleteId = boot.athleteId || '0';
   let chronicData = boot.chronicData;
   let calendarCache = {}; // "YYYY-MM" -> [sessions] | null (loading)
   let pendingSessions = [];
   let libraryTargetDate = null; // date en attente de sélection dans la modale bibliothèque
+  let chartHidden = localStorage.getItem('planningChartHidden') === '1';
   const _today = new Date();
   let currentYear = _today.getFullYear();
   let currentMonth = _today.getMonth() + 1;
@@ -64,15 +80,24 @@
   let pendingEdits = {}; // eventId (string) -> { date, name, type, description, moving_time, rpe, qualityKind, qualityParams }
   let pendingDeletes = new Set(); // Set<eventId (string)>
   let weekPlanState = {}; // weekIso -> { planningType, nRun, nBike, nStrength }
+  let recapActivityId = null; // id de l'activité réelle affichée dans le récap ouvert (pour "Analyse avancée")
+  let recapSportKey = null; // 'Run' | 'Ride' | null (sport supporté par l'analyse avancée)
 
   const monthKey = (y, m) => `${y}-${String(m).padStart(2, '0')}`;
+
+  // Le boot ne couvre que today..+28 (fenêtre glissante côté serveur) : la partie AVANT aujourd'hui du
+  // mois courant (séances passées) y manque. `bootSeededMonthKey` force fetchCalendarMonth à quand même
+  // refaire un fetch complet une première fois pour ce mois, malgré le cache déjà "défini" par le boot.
+  let bootSeededMonthKey = null;
 
   if (boot.calendar && boot.calendar.length) {
     // boot.calendar vient d'une fenêtre glissante de 28 jours côté serveur (pas alignée sur le mois) :
     // ne garder que les dates du mois courant, sinon un mois voisin ensuite chargé séparément
     // (ex. pour l'horizon du graphique) ferait apparaitre ses séances en double dans allRealSessionsInCache.
     const monthStr = String(currentMonth).padStart(2, '0');
-    calendarCache[monthKey(currentYear, currentMonth)] = boot.calendar.filter((s) => s.date && s.date.slice(5, 7) === monthStr && s.date.slice(0, 4) === String(currentYear));
+    const mk = monthKey(currentYear, currentMonth);
+    calendarCache[mk] = boot.calendar.filter((s) => s.date && s.date.slice(5, 7) === monthStr && s.date.slice(0, 4) === String(currentYear));
+    bootSeededMonthKey = mk;
   }
 
   function getMonthWeeks(year, month) {
@@ -102,6 +127,7 @@
     prevMonth: $('prevMonth'),
     nextMonth: $('nextMonth'),
     todayBtn: $('todayBtn'),
+    exportCsvBtn: $('exportCsvBtn'),
     monthLabel: $('monthLabel'),
     monthGrid: $('monthGrid'),
     cycleSummary: $('cycleSummary'),
@@ -110,6 +136,7 @@
     editName: $('editName'),
     editRpe: $('editRpe'),
     editDescription: $('editDescription'),
+    editStepChart: $('editStepChart'),
     editComputedInfo: $('editComputedInfo'),
     editRealNotice: $('editRealNotice'),
     editSave: $('editSave'),
@@ -124,6 +151,18 @@
     confirmSendSummary: $('confirmSendSummary'),
     confirmSendCancel: $('confirmSendCancel'),
     confirmSendOk: $('confirmSendOk'),
+    chartCard: $('chartCard'),
+    chartBody: $('chartBody'),
+    toggleChartBtn: $('toggleChartBtn'),
+    recapModal: $('recapModal'),
+    recapTitle: $('recapTitle'),
+    recapBody: $('recapBody'),
+    recapClose: $('recapClose'),
+    recapAdvancedBtn: $('recapAdvancedBtn'),
+    intervalsModal: $('intervalsModal'),
+    intervalsTitle: $('intervalsTitle'),
+    intervalsBody: $('intervalsBody'),
+    intervalsClose: $('intervalsClose'),
   };
 
   // ── Library ────────────────────────────────────────────────────
@@ -245,7 +284,8 @@
   // ── Month calendar ────────────────────────────────────────────
   async function fetchCalendarMonth(year, month) {
     const mk = monthKey(year, month);
-    if (calendarCache[mk] !== undefined) return;
+    if (calendarCache[mk] !== undefined && mk !== bootSeededMonthKey) return;
+    bootSeededMonthKey = null; // ne contourne le dédoublonnage qu'une seule fois (premier fetch réel du mois du boot)
     calendarCache[mk] = null; // loading sentinel
     const mm = String(month).padStart(2, '0');
     const firstIso = `${year}-${mm}-01`;
@@ -282,9 +322,11 @@
     </div>`;
   }
 
-  /** Barre d'actions au-dessus d'une semaine du calendrier (charge/ACWR prévu + préremplir/IA), affichée pour la semaine en cours et les semaines futures. */
+  /** Barre d'actions au-dessus d'une semaine du calendrier (charge/ACWR prévu), affichée pour la semaine
+   * en cours et les semaines futures. Génération automatique (IA/Auto) retirée de l'UI pour l'instant
+   * (tout reste manuel) — le code correspondant (getWeekState/applyAiPlanWeek/applyDeterministicPlanWeek)
+   * est conservé intact pour une réactivation ultérieure. */
   function weekActionsHtml(week) {
-    const state = getWeekState(week);
     const metrics = weekMetrics(week);
     const acwrText = metrics.acwr == null ? 'n/a' : metrics.acwr.toFixed(2);
     const isCurrent = week === currentWeekIso();
@@ -292,18 +334,6 @@
       <div>
         <strong>Semaine du ${fmtDateFR(week)}${isCurrent ? ' (en cours)' : ''}</strong>
         <span class="caption">${Math.round(metrics.weeklyLoad)} Foster · ACWR ${acwrText}</span>
-      </div>
-      <div class="cycle-week-controls">
-        <select class="cw-plan-type" data-week="${week}" title="Type de semaine">
-          <option value="Charge"${state.planningType === 'Charge' ? ' selected' : ''}>Charge</option>
-          <option value="Récupération"${state.planningType === 'Récupération' ? ' selected' : ''}>Récup</option>
-          <option value="Choc"${state.planningType === 'Choc' ? ' selected' : ''}>Choc</option>
-        </select>
-        <input type="number" class="cw-run" data-week="${week}" min="0" max="8" value="${state.nRun}" title="Séances CAP" />
-        <input type="number" class="cw-bike" data-week="${week}" min="0" max="8" value="${state.nBike}" title="Séances vélo" />
-        <input type="number" class="cw-strength" data-week="${week}" min="0" max="6" value="${state.nStrength}" title="Séances renfo" />
-        <button class="cw-prefill btn-sm" data-week="${week}">Préremplir</button>
-        <button class="cw-ai-prefill btn-sm" data-week="${week}" title="Proposer une semaine via IA (Claude)">IA</button>
       </div>
     </div>`;
   }
@@ -332,9 +362,11 @@
     el.monthGrid.innerHTML = html;
   }
 
-  /** Charge Foster = RPE × durée, comme pour les séances en attente. icu_training_load (autre métrique Intervals.icu, pas Foster) n'est utilisé qu'en dernier recours si l'événement n'a pas de RPE. */
+  /** Charge Foster = RPE × durée, comme pour les séances en attente. Pour les séances "hors plan"
+   * (sans RPE prévu) ou en dernier recours, on retombe sur la charge réelle déjà calculée côté serveur. */
   function realSessionLoad(s, durMin) {
     if (s.rpe && durMin) return Math.round(s.rpe * durMin);
+    if (Number.isFinite(s.realLoad)) return Math.round(s.realLoad);
     return Number.isFinite(s.trainingLoad) ? Math.round(s.trainingLoad) : null;
   }
 
@@ -354,13 +386,33 @@
       </div>`;
     }
     const load = realSessionLoad(s, durMin);
-    const cls = `session-chip real${s.edited ? ' edited' : ''}${s.toDelete ? ' to-delete' : ''}`;
-    const draggable = !s.toDelete;
-    return `<div class="${cls}" draggable="${draggable}" data-event-id="${escHtml(s.id)}" title="${name} · Glisser pour déplacer · cliquer pour modifier · ✕ pour ${s.toDelete ? 'annuler la suppression' : 'supprimer'} (confirmation demandée avant envoi)">
+    const isExtra = s.status === 'extra';
+    const isPastRealized = s.status === 'done' || s.status === 'missed';
+    // Fond du chip : réalisée (vert) / non réalisée (rouge) / hors plan (bleu) — reste constant,
+    // seul le score de complétion (chip-pct) change de couleur selon le seuil (jaune <80%, vert
+    // 80-120%, rouge >120%).
+    const statusCls = isExtra ? ' status-extra' : (isPastRealized ? ` status-${s.status}` : '');
+    const pct = isPastRealized && Number.isFinite(s.completionPct) ? s.completionPct : null;
+    const pctCls = pct != null ? completionColorClass(pct) : '';
+    const statusLabel = isExtra
+      ? ' · Hors plan (réalisée)'
+      : s.status === 'done' ? ` · Réalisée (${pct}% de la charge prévue)`
+      : s.status === 'missed' ? ' · Non réalisée'
+      : '';
+    const cls = `session-chip real${statusCls}${s.edited ? ' edited' : ''}${s.toDelete ? ' to-delete' : ''}`;
+    const draggable = !isExtra && !s.toDelete;
+    // Cliquer sur une séance passée (réalisée, manquée ou hors plan) ouvre le récap détaillé plutôt
+    // que l'éditeur (qui n'a de sens que pour une séance à venir/du jour, ou une activité réelle éditable).
+    const clickHint = isExtra || isPastRealized ? 'cliquer pour voir le détail' : 'cliquer pour modifier';
+    const dragHint = draggable ? 'Glisser pour déplacer · ' : '';
+    const removeHint = isExtra ? '' : ` · ✕ pour ${s.toDelete ? 'annuler la suppression' : 'supprimer'} (confirmation demandée avant envoi)`;
+    const removeBtn = isExtra ? '' : `<button class="chip-remove" title="${s.toDelete ? 'Annuler la suppression' : 'Supprimer'}">${s.toDelete ? '↺' : '✕'}</button>`;
+    return `<div class="${cls}" draggable="${draggable}" data-event-id="${escHtml(s.id)}" data-status="${s.status || ''}" title="${name}${statusLabel} · ${dragHint}${clickHint}${removeHint}">
       <span class="chip-icon">${icon}</span><span class="chip-name">${name}</span>
       ${dur ? `<span class="chip-dur">${dur}</span>` : ''}
       ${load != null ? `<span class="chip-load">${load}</span>` : ''}
-      <button class="chip-remove" title="${s.toDelete ? 'Annuler la suppression' : 'Supprimer'}">${s.toDelete ? '↺' : '✕'}</button>
+      ${pct != null ? `<span class="chip-pct ${pctCls}">${pct}%</span>` : ''}
+      ${removeBtn}
     </div>`;
   }
 
@@ -484,30 +536,44 @@
     openEditModal(id);
   }
 
-  // ── Séances qualité (intervalles paramétrables, utilisées par le préremplissage automatique) ──
-  /** Applique un template d'intervalles (bibliothèque) à une séance : régénère description/durée/RPE. */
-  function applyQualityTemplate(p, type, kind) {
-    const template = SESSION_LIBRARY[type] && SESSION_LIBRARY[type][kind];
-    if (!template) return false;
-    const { description, durationMin } = buildSessionDescription(template);
-    p.type = type;
-    p.qualityKind = kind;
-    p.description = description;
-    p.moving_time = Math.round(durationMin * 60);
-    p.rpe = template.rpe || p.rpe || 5;
-    p.name = `${type === 'Ride' ? 'Vélo' : 'CAP'} — ${kind}`;
-    return true;
-  }
-
   // ── Édition d'une séance : titre / RPE / description uniquement — la durée (et donc la charge
   // Foster) est toujours dérivée automatiquement de la description, seule source de vérité. ──
-  /** Affiche en direct la durée/charge estimées à partir de la description + RPE saisis. */
+  /** Couleur d'une étape selon son intensité moyenne (% LTHR/FTP/Pace...), même échelle que les zones classiques. */
+  function stepBarColor(avgPct) {
+    if (avgPct == null) return '#cbd5e1';
+    if (avgPct < 65) return '#38bdf8';
+    if (avgPct < 85) return '#22c55e';
+    if (avgPct < 95) return '#eab308';
+    if (avgPct < 101) return '#f97316';
+    return '#ef4444';
+  }
+
+  /** Petit schéma en barres de la séance (largeur = durée, hauteur/couleur = % d'intensité prévu), déplié à partir de la description. Injecté dans #editStepChart, qui porte déjà la classe .step-chart (conteneur flex) — ne PAS re-envelopper dans un second .step-chart, sinon les barres deviennent flex-items d'un div sans largeur propre et leurs % s'effondrent. */
+  function stepChartHtml(steps) {
+    if (!steps.length) return '<p class="step-chart-empty">Aucune étape reconnue dans la description.</p>';
+    const totalMin = steps.reduce((sum, st) => sum + st.durationMin, 0) || 1;
+    const maxPct = steps.reduce((m, st) => Math.max(m, st.highPct ?? st.lowPct ?? 0), 100);
+    const chartMax = Math.max(120, Math.ceil((maxPct + 10) / 10) * 10);
+    return steps
+      .map((st) => {
+        const widthPct = (st.durationMin / totalMin) * 100;
+        const avgPct = st.lowPct != null ? (st.lowPct + st.highPct) / 2 : null;
+        const heightPct = avgPct != null ? Math.max(8, Math.min(100, (avgPct / chartMax) * 100)) : 18;
+        const pctLabel = st.lowPct != null ? `${st.lowPct}-${st.highPct}%${st.zone ? ' ' + st.zone : ''}` : (st.zone || 'Repos');
+        const title = `${st.label ? st.label + ' · ' : ''}${fmtMinutes(st.durationMin)} · ${pctLabel}`;
+        return `<div class="step-bar" style="width:${widthPct}%;height:${heightPct}%;background:${stepBarColor(avgPct)};" title="${escHtml(title)}"></div>`;
+      })
+      .join('');
+  }
+
+  /** Affiche en direct la durée/charge estimées + le schéma d'intensité, à partir de la description + RPE saisis. */
   function updateEditComputedInfo() {
     const minutes = parseDescriptionDurationMinutes(el.editDescription.value);
     const rpe = Math.min(10, Math.max(1, parseInt(el.editRpe.value) || 3));
     el.editComputedInfo.textContent = minutes > 0
-      ? `Durée estimée : ${fmtMinutes(minutes)} · Charge Foster : ${Math.round(minutes * rpe)}`
+      ? `Durée : ${fmtMinutes(minutes)} · Charge Foster : ${Math.round(minutes * rpe)}`
       : '⚠ Aucune durée reconnue dans la description — la durée précédente sera conservée.';
+    if (el.editStepChart) el.editStepChart.innerHTML = stepChartHtml(parseDescriptionSteps(el.editDescription.value));
   }
 
   function fillEditForm(p) {
@@ -591,6 +657,130 @@
   /** Toutes les séances réelles (Intervals.icu) actuellement en cache, tous mois confondus. */
   function findRealSessionById(id) {
     return allRealSessionsInCache().find((s) => String(s.id) === String(id));
+  }
+
+  // ── Récap d'une séance passée (réalisée, manquée ou hors plan) ──
+  function recapRow(label, value) {
+    if (value == null || value === '') return '';
+    return `<div class="recap-row"><span class="recap-label">${label}</span><span class="recap-value">${value}</span></div>`;
+  }
+
+  function openRecapModal(id) {
+    const s = findRealSessionById(id);
+    if (!s || !el.recapModal) return;
+    const isExtra = s.status === 'extra';
+    const isMissed = s.status === 'missed';
+    const sportKey = SPORT_TYPE_MAP[s.type] || s.type;
+    const isBike = sportKey === 'Ride';
+
+    el.recapTitle.textContent = `${sportIcon(s.type)} ${s.name || 'Séance'} — ${fmtDateFR(s.date)}`;
+
+    let html = '';
+    if (isExtra) {
+      html += `<p class="pill pill-orange">Hors plan</p>`;
+    } else if (isMissed) {
+      html += `<p class="pill pill-red">Non réalisée</p>`;
+    } else {
+      // Le pill reste vert (réalisée) ; seul le % lui-même est coloré selon le seuil de complétion.
+      const pctCls = completionColorClass(s.completionPct);
+      const pctSpan = s.completionPct != null ? ` · <span class="chip-pct ${pctCls}">${s.completionPct}%</span>` : '';
+      html += `<p class="pill pill-green">Réalisée${pctSpan}</p>`;
+    }
+
+    if (isExtra) {
+      html += `<div class="recap-section"><h4>Charge réelle</h4>
+        ${recapRow('Charge Foster', s.realLoad)}
+        ${recapRow('RPE réel', s.realRpe)}
+      </div>`;
+    } else {
+      const pctCls = completionColorClass(s.completionPct);
+      html += `<div class="recap-section"><h4>Charge prévue vs réelle</h4>
+        ${recapRow('Charge Foster', `${s.plannedLoad ?? '–'} prévue → ${isMissed ? '–' : (s.realLoad ?? '–')} réelle`)}
+        ${recapRow('RPE', `${s.rpe ?? '–'} prévu → ${isMissed ? '–' : (s.realRpe ?? '–')} réel`)}
+        ${!isMissed && s.completionPct != null ? recapRow('% de complétion', `<span class="chip-pct ${pctCls}">${s.completionPct}%</span>`) : ''}
+      </div>`;
+    }
+
+    if (!isMissed) {
+      html += `<div class="recap-section"><h4>Statistiques</h4>
+        ${recapRow('Temps', s.realMovingTime ? fmtTime(s.realMovingTime) : null)}
+        ${recapRow('Distance', s.realDistanceM ? `${(s.realDistanceM / 1000).toFixed(1)} km` : null)}
+        ${recapRow('D+', s.realElevationM ? `${Math.round(s.realElevationM)} m` : null)}
+        ${isBike
+          ? `${recapRow('Puissance moyenne', s.realAvgWatts != null ? `${s.realAvgWatts} W` : null)}${recapRow('Puissance normalisée', s.realNormPower != null ? `${s.realNormPower} W` : null)}`
+          : `${recapRow('Allure moyenne', fmtPaceFromSpeed(s.realAvgSpeedMs))}${recapRow('Puissance moyenne', s.realAvgWatts != null ? `${s.realAvgWatts} W` : null)}`}
+        ${recapRow("Note de l'athlète", s.realNote ? escHtml(s.realNote) : null)}
+      </div>`;
+    } else {
+      html += `<p class="caption">Aucune activité réelle enregistrée pour cette séance.</p>`;
+    }
+
+    el.recapBody.innerHTML = html;
+    el.recapModal.style.display = 'flex';
+
+    // "Analyse avancée" par intervalle : uniquement pour une vraie activité (pas une séance manquée)
+    // de type course à pied/trail ou vélo, seuls sports pour lesquels ce détail a du sens ici.
+    recapActivityId = !isMissed && s.activityId != null ? s.activityId : null;
+    recapSportKey = isBike ? 'Ride' : (sportKey === 'Run' ? 'Run' : null);
+    if (el.recapAdvancedBtn) {
+      el.recapAdvancedBtn.style.display = recapActivityId && recapSportKey ? '' : 'none';
+      el.recapAdvancedBtn.dataset.title = el.recapTitle.textContent;
+    }
+  }
+
+  function closeRecapModal() {
+    el.recapModal.style.display = 'none';
+  }
+
+  const INTERVAL_TYPE_CAPTION = (label) => (label ? `<span class="caption">(${escHtml(label)})</span>` : '');
+
+  /** Tableau HTML de l'analyse avancée par intervalle. `sportKey` = 'Ride' masque allure/VAM (sans objet à vélo). */
+  function intervalsTableHtml(rows, sportKey) {
+    if (!rows || !rows.length) return '<p class="caption">Aucun intervalle détecté pour cette activité.</p>';
+    const isBike = sportKey === 'Ride';
+    const headers = isBike
+      ? ['#', 'Distance', 'Temps', 'D+', 'D-', 'Watts moy.', 'FC moy.', 'FC max']
+      : ['#', 'Distance', 'Temps', 'D+', 'D-', 'Allure', 'VAM', 'Watts moy.', 'FC moy.', 'FC max'];
+    const body = rows
+      .map((r) => {
+        const cells = [
+          `${r.index} ${INTERVAL_TYPE_CAPTION(r.typeLabel)}`,
+          r.distanceM ? `${(r.distanceM / 1000).toFixed(2)} km` : '–',
+          r.movingTime ? fmtTime(r.movingTime) : '–',
+          r.elevationGainM ? `${Math.round(r.elevationGainM)} m` : '–',
+          r.elevationLossM ? `${Math.round(r.elevationLossM)} m` : '–',
+        ];
+        if (!isBike) {
+          cells.push(fmtPaceFromSpeed(r.avgSpeedMs) || '–');
+          cells.push(r.vamMh != null ? `${r.vamMh} m/h` : '–');
+        }
+        cells.push(r.avgWatts != null ? `${r.wattsEstimated ? '~' : ''}${r.avgWatts} W` : '–');
+        cells.push(r.avgHr != null ? `${r.avgHr} bpm` : '–');
+        cells.push(r.maxHr != null ? `${r.maxHr} bpm` : '–');
+        return `<tr>${cells.map((c) => `<td>${c}</td>`).join('')}</tr>`;
+      })
+      .join('');
+    const hasEstimate = rows.some((r) => r.wattsEstimated);
+    const footnote = hasEstimate
+      ? '<p class="caption" style="margin-top:6px;">~ : puissance estimée (pas de capteur), à partir du poids, du D+, du temps et de la distance.</p>'
+      : '';
+    return `<table class="intervals-table"><thead><tr>${headers.map((h) => `<th>${h}</th>`).join('')}</tr></thead><tbody>${body}</tbody></table>${footnote}`;
+  }
+
+  async function openIntervalsModal(activityId, sportKey, title) {
+    if (!el.intervalsModal) return;
+    el.intervalsTitle.textContent = `Analyse avancée — ${title}`;
+    el.intervalsBody.innerHTML = '<p class="caption">Chargement…</p>';
+    el.intervalsModal.style.display = 'flex';
+    try {
+      const qs = new URLSearchParams({ athleteId, sportKey: sportKey || '' }).toString();
+      const res = await fetch(`/api/planning/activity/${encodeURIComponent(activityId)}/intervals?${qs}`);
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || 'Erreur de chargement.');
+      el.intervalsBody.innerHTML = intervalsTableHtml(body.intervals, sportKey);
+    } catch (e) {
+      el.intervalsBody.innerHTML = `<p class="alert alert-error">${escHtml(e.message)}</p>`;
+    }
   }
 
   /** Marque/démarque une séance réelle pour suppression (en attente de confirmation) ; annule toute modification en attente sur cette séance. */
@@ -901,55 +1091,6 @@
     return weekPlanState[week];
   }
 
-  /** Choisit une date libre dans la semaine, en respectant l'ordre de préférence et en évitant le passé pour la semaine en cours. */
-  function pickSessionDate(weekStart, preferredDows, usedDates) {
-    const minDate = weekStart === currentWeekIso() ? todayIso() : weekStart;
-    const ordered = preferredDows.map((dow) => addDaysIso(weekStart, dow - 1));
-    let date = ordered.find((d) => d >= minDate && !usedDates.has(d));
-    if (!date) {
-      for (let i = 0; i < 7; i++) {
-        const d = addDaysIso(weekStart, i);
-        if (d >= minDate && !usedDates.has(d)) { date = d; break; }
-      }
-    }
-    if (!date) date = ordered[0] || weekStart;
-    usedDates.add(date);
-    return date;
-  }
-
-  function applyGeneratedPlanWeek(week) {
-    const state = getWeekState(week);
-    const chronicLoad = chronicBeforeWeek(week);
-    const plan = buildTrainingPlan({ chronicLoad, planningType: state.planningType, nRun: state.nRun, nBike: state.nBike, nStrength: state.nStrength });
-    const preferredDays = {
-      Run: [2, 4, 6, 7, 3, 5, 1],
-      Ride: [3, 5, 7, 2, 4, 6, 1],
-      Strength: [1, 5, 3, 2, 4, 6, 7],
-    };
-    const usedBySport = { Run: new Set(), Ride: new Set(), Strength: new Set() };
-    const weekEnd = addDaysIso(week, 6);
-    pendingSessions = pendingSessions.filter((p) => p.date < week || p.date > weekEnd);
-
-    for (const s of plan.sessions) {
-      const type = s.sport === 'CAP' ? 'Run' : s.sport === 'Vélo' ? 'Ride' : 'Strength';
-      const date = pickSessionDate(week, preferredDays[type], usedBySport[type]);
-      const pending = {
-        id: `pending-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-        date,
-        name: s.seance,
-        type,
-        description: '',
-        moving_time: s.dureeMin * 60,
-        rpe: s.rpe,
-      };
-      // Par défaut, la séance de qualité utilise un vrai template d'intervalles (paramétrable ensuite).
-      if (s.seance === 'CAP — qualité') applyQualityTemplate(pending, 'Run', 'Seuil');
-      pendingSessions.push(pending);
-    }
-
-    refreshAll();
-  }
-
   /** ACWR cible par défaut proposé selon le type de semaine (éditable ensuite par l'utilisateur). */
   function defaultTargetAcwrFor(planningType) {
     if (planningType === 'Choc') return 1.5;
@@ -1026,6 +1167,55 @@
     }
   }
 
+  /** Remplit une semaine SANS IA, selon des règles fixes appliquées à la vraie bibliothèque
+   * Intervals.icu (même contrat que applyAiPlanWeek, sans modale ni commentaire). */
+  async function applyDeterministicPlanWeek(week) {
+    const state = getWeekState(week);
+    const btn = el.monthGrid && el.monthGrid.querySelector(`.cw-det-prefill[data-week="${week}"]`);
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Auto…'; }
+
+    try {
+      const res = await fetch('/api/planning/deterministic-week', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          planningType: state.planningType,
+          nRun: state.nRun,
+          nBike: state.nBike,
+          nStrength: state.nStrength,
+          chronicLoad: chronicBeforeWeek(week),
+          targetAcwr: defaultTargetAcwrFor(state.planningType),
+        }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || 'Échec du remplissage automatique.');
+
+      const weekEnd = addDaysIso(week, 6);
+      pendingSessions = pendingSessions.filter((p) => p.date < week || p.date > weekEnd);
+
+      for (const s of body.plan.sessions) {
+        pendingSessions.push({
+          id: `pending-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          date: addDaysIso(week, s.dayOfWeek - 1),
+          name: s.name,
+          type: s.sport,
+          description: s.description || '',
+          moving_time: s.durationMin * 60,
+          rpe: s.rpe,
+        });
+      }
+
+      refreshAll();
+      if (body.plan.rationale && el.sendResult) {
+        el.sendResult.innerHTML = `<div class="alert alert-info">⚙️ ${escHtml(body.plan.rationale)}</div>`;
+      }
+    } catch (e) {
+      if (el.sendResult) el.sendResult.innerHTML = `<div class="alert alert-error">Erreur : ${escHtml(e.message)}</div>`;
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = 'Auto'; }
+    }
+  }
+
   /** Précharge (best-effort) les mois couverts par l'horizon du graphique, pour que la charge déjà envoyée sur les semaines futures apparaisse dans le graphique et les barres d'action du calendrier. */
   function prefetchHorizonMonths(planWeeks) {
     const keys = new Set();
@@ -1040,7 +1230,17 @@
     });
   }
 
+  /** Affiche/masque le contenu du graphique de charge (option persistée en localStorage) pour laisser
+   * plus de place au calendrier ; le bouton lui-même reste visible pour pouvoir le réafficher.
+   * Ne (re)calcule le graphique que s'il redevient visible. */
+  function applyChartVisibility() {
+    if (el.chartBody) el.chartBody.style.display = chartHidden ? 'none' : '';
+    if (el.toggleChartBtn) el.toggleChartBtn.textContent = chartHidden ? '📈 Afficher le graphique' : '📉 Masquer le graphique';
+    if (!chartHidden) renderLoadChart();
+  }
+
   async function renderLoadChart() {
+    if (chartHidden) return;
     if (!window.Chart) {
       await new Promise((resolve, reject) => {
         const s = document.createElement('script');
@@ -1270,6 +1470,10 @@
     const d = new Date(); currentYear = d.getFullYear(); currentMonth = d.getMonth() + 1;
     renderMonthCalendar(); fetchCalendarMonth(currentYear, currentMonth);
   });
+  el.exportCsvBtn.addEventListener('click', () => {
+    const qs = new URLSearchParams({ athleteId }).toString();
+    window.location.href = `/api/planning/export-csv?${qs}`;
+  });
 
   // Calendrier : semaine (préremplir/IA/paramètres), séances (ajout/édition/suppression)
   el.monthGrid.addEventListener('change', (e) => {
@@ -1283,8 +1487,8 @@
   });
 
   el.monthGrid.addEventListener('click', (e) => {
-    const prefillBtn = e.target.closest('.cw-prefill');
-    if (prefillBtn) { applyGeneratedPlanWeek(prefillBtn.dataset.week); return; }
+    const detBtn = e.target.closest('.cw-det-prefill');
+    if (detBtn) { applyDeterministicPlanWeek(detBtn.dataset.week); return; }
 
     const aiBtn = e.target.closest('.cw-ai-prefill');
     if (aiBtn) { openAiPlanModal(aiBtn.dataset.week); return; }
@@ -1305,7 +1509,15 @@
     if (pendingChip && pendingChip.dataset.pendingId) { openEditModal(pendingChip.dataset.pendingId); return; }
 
     const realChip = e.target.closest('.session-chip.real');
-    if (realChip && realChip.dataset.eventId) { openEditModalForReal(realChip.dataset.eventId); return; }
+    if (realChip && realChip.dataset.eventId) {
+      const status = realChip.dataset.status;
+      if (status === 'done' || status === 'missed' || status === 'extra') {
+        openRecapModal(realChip.dataset.eventId);
+      } else {
+        openEditModalForReal(realChip.dataset.eventId);
+      }
+      return;
+    }
 
     const addBtn = e.target.closest('.plan-add-session');
     if (addBtn) { openLibraryModal(addBtn.dataset.date); return; }
@@ -1316,6 +1528,25 @@
   el.editModal.addEventListener('click', (e) => { if (e.target === el.editModal) closeEditModal(); });
   el.editDescription.addEventListener('input', updateEditComputedInfo);
   el.editRpe.addEventListener('input', updateEditComputedInfo);
+
+  if (el.recapClose) el.recapClose.addEventListener('click', closeRecapModal);
+  if (el.recapModal) el.recapModal.addEventListener('click', (e) => { if (e.target === el.recapModal) closeRecapModal(); });
+  if (el.recapAdvancedBtn) {
+    el.recapAdvancedBtn.addEventListener('click', () => {
+      if (!recapActivityId || !recapSportKey) return;
+      openIntervalsModal(recapActivityId, recapSportKey, el.recapAdvancedBtn.dataset.title || '');
+    });
+  }
+  if (el.intervalsClose) el.intervalsClose.addEventListener('click', () => { el.intervalsModal.style.display = 'none'; });
+  if (el.intervalsModal) el.intervalsModal.addEventListener('click', (e) => { if (e.target === el.intervalsModal) el.intervalsModal.style.display = 'none'; });
+
+  if (el.toggleChartBtn) {
+    el.toggleChartBtn.addEventListener('click', () => {
+      chartHidden = !chartHidden;
+      localStorage.setItem('planningChartHidden', chartHidden ? '1' : '0');
+      applyChartVisibility();
+    });
+  }
 
   el.aiPlanType.addEventListener('change', () => { el.aiPlanAcwr.value = defaultTargetAcwrFor(el.aiPlanType.value); });
   el.aiPlanCancel.addEventListener('click', closeAiPlanModal);
@@ -1337,6 +1568,6 @@
   loadIntervalsWorkouts();
   renderMonthCalendar();
   fetchCalendarMonth(currentYear, currentMonth);
-  renderLoadChart();
+  applyChartVisibility();
 
 })();

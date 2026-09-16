@@ -14,15 +14,5 @@
     "bike": { "default": 2 },
     "weightTraining": { "default": 7 },
     "other": { "default": 3 }
-  },
-  "planBuilder": {
-    "bike": { "rpe": 2, "durationMin": 75 },
-    "strength": { "rpe": 7, "durationMin": 30 },
-    "run": {
-      "ef": 3,
-      "quality": 7,
-      "longRun": 4,
-      "extraEf": 2
-    }
   }
 }

@@ -100,8 +100,6 @@ src/
   athletes.js                liste des athlètes (compte coach)
   planningData.js            charge chronique + calendrier planifié
   aiPlanner.js               proposition de semaine via IA (Claude, aide planif)
-  sessionLibrary.js          bibliothèque de séances + génération de description (UMD)
-  planBuilder.js             planificateur de semaine déterministe (UMD)
   format.js                  formatage des durées (UMD)
   dateUtils.js                utilitaires de dates (semaines lundi→dimanche)
 views/                      templates EJS (dashboard, planning)
@@ -111,9 +109,8 @@ public/
   js/planning.js              bibliothèque de séances + planificateur (côté client)
 ```
 
-Les modules UMD de `src/` (`format.js`, `sessionLibrary.js`,
-`planBuilder.js`) sont utilisés à la fois côté serveur (`require`) et
-côté navigateur (servis tels quels sous `/vendor/…`), pour éviter toute
+Le module UMD `format.js` est utilisé à la fois côté serveur (`require`) et
+côté navigateur (servi tel quel sous `/vendor/format.js`), pour éviter toute
 duplication de logique entre les deux.
 
 ## Notes de portage
