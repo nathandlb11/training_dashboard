@@ -69,32 +69,34 @@ function buildForecast(rawFutureEvents) {
     const rpe = effectiveRpeForPlanned(w.type, w.name, w.icu_rpe);
     const load = (rpe * w.moving_time) / 60.0;
     totalPlannedByDate.set(w.date, (totalPlannedByDate.get(w.date) || 0) + load);
+    w.week = weekStartMonday(w.date);
+    w.sport_key = normalizeSportKey(w.type);
   }
 
-  // Exclure les séances déjà liées à une activité réelle (paired_activity_id présent = réalisée ;
-  // Intervals.icu n'expose PAS de champ `activity_id` sur les événements calendrier)
-  const workouts = rows.filter((r) => r.date && ['WORKOUT', 'PLAN'].includes(r.category) && !r.paired_activity_id);
-  let forecastByDate = new Map();
+  // Volume horaire planifié par sport/semaine : total de la semaine (réalisé ou non), pas seulement
+  // ce qui reste à faire, sinon une semaine en cours partiellement réalisée s'affiche sous-comptée.
   const planRunWeekly = new Map();
   const planBikeWeekly = new Map();
+  const runRows = allWorkouts.filter((w) => RUN_TRAIL.has(w.sport_key));
+  const runByWeek = groupSum(runRows, (w) => w.week, (w) => w.moving_time);
+  for (const [week, secs] of runByWeek) planRunWeekly.set(week, secs / 3600);
+
+  const bikeRows = allWorkouts.filter((w) => BIKE_TYPES.has(w.sport_key));
+  const bikeByWeek = groupSum(bikeRows, (w) => w.week, (w) => w.moving_time);
+  for (const [week, secs] of bikeByWeek) planBikeWeekly.set(week, secs / 3600);
+
+  // Exclure les séances déjà liées à une activité réelle (paired_activity_id présent = réalisée ;
+  // Intervals.icu n'expose PAS de champ `activity_id` sur les événements calendrier) : sert au
+  // forecast journalier "restant à faire" (forecastByDate), utilisé ailleurs.
+  const workouts = rows.filter((r) => r.date && ['WORKOUT', 'PLAN'].includes(r.category) && !r.paired_activity_id);
+  let forecastByDate = new Map();
 
   if (workouts.length) {
     for (const w of workouts) {
-      const rpe = effectiveRpeForPlanned(w.type, w.name, w.icu_rpe);
-      w.foster_load = (rpe * w.moving_time) / 60.0;
-      w.week = weekStartMonday(w.date);
-      w.sport_key = normalizeSportKey(w.type);
+      w.foster_load = (effectiveRpeForPlanned(w.type, w.name, w.icu_rpe) * w.moving_time) / 60.0;
     }
 
     forecastByDate = groupSum(workouts, (w) => w.date, (w) => w.foster_load);
-
-    const runRows = workouts.filter((w) => RUN_TRAIL.has(w.sport_key));
-    const runByWeek = groupSum(runRows, (w) => w.week, (w) => w.moving_time);
-    for (const [week, secs] of runByWeek) planRunWeekly.set(week, secs / 3600);
-
-    const bikeRows = workouts.filter((w) => BIKE_TYPES.has(w.sport_key));
-    const bikeByWeek = groupSum(bikeRows, (w) => w.week, (w) => w.moving_time);
-    for (const [week, secs] of bikeByWeek) planBikeWeekly.set(week, secs / 3600);
   }
 
   const raceEvents = [];
