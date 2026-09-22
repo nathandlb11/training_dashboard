@@ -33,6 +33,9 @@
   }
 
   const SPORT_COLORS = ['#ff6b35', '#4a90d9', '#a78bfa', '#35c46f', '#f5a623', '#ec4899', '#22d3ee', '#facc15'];
+  const ZONE_COLORS = ['#3b82f6', '#eab308', '#ef4444']; // modèle 3 paliers bleu/jaune/rouge (FC + puissance)
+  let hrZoneSelection = null; // Set<string> des sports cochés pour le graphique zones FC (null = pas encore initialisé)
+  let powerZoneSelection = null; // idem pour le graphique zones de puissance
 
   // Bandes horizontales colorées pour chaque note Intervals.icu (s'étend jusqu'à la note suivante)
   const NOTE_BAND_COLORS = [
@@ -452,6 +455,385 @@
   }
 
   // ------------------------------------------------------------
+  // Graphique — TRIMP hebdomadaire (2e mesure de charge, complément du Foster/sRPE) + planifié
+  // ------------------------------------------------------------
+  function renderTrimpChart(data) {
+    destroyChart('trimp');
+    const c = data.trimpChart;
+    const el = document.getElementById('chart-trimp');
+    const datasets = [
+      {
+        type: 'bar',
+        label: 'TRIMP',
+        data: c.weeks.map((w, i) => ({ x: w, y: c.trimp[i] })),
+        backgroundColor: '#a78bfa',
+      },
+    ];
+    if (c.plannedTrimp.some((v) => v != null)) {
+      datasets.push({
+        type: 'bar',
+        label: 'TRIMP planifié (estimé)',
+        data: c.weeks.map((w, i) => ({ x: w, y: c.plannedTrimp[i] })),
+        backgroundColor: 'rgba(167,139,250,0.35)',
+      });
+    }
+    charts.trimp = new Chart(el.getContext('2d'), {
+      data: { datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { labels: { color: '#eef0f4' } },
+          tooltip: { callbacks: { label: (ctx) => (ctx.raw.y != null ? `${ctx.dataset.label} : ${Math.round(ctx.raw.y)}` : null) } },
+        },
+        scales: {
+          x: baseTimeScale({ time: { unit: 'week', tooltipFormat: 'dd/MM/yyyy' } }),
+          y: { title: { display: true, text: 'TRIMP / semaine', color: '#8a91a3' }, ticks: { color: '#8a91a3' }, grid: { color: '#232838' }, afterFit(s) { s.width = 70; } },
+        },
+      },
+    });
+  }
+
+  // ------------------------------------------------------------
+  // Graphique — Temps hebdomadaire dans les zones FC (barres empilées, filtrable par sport)
+  // ------------------------------------------------------------
+  function zoneLabelsFor(zoneIds, bounds, unit) {
+    if (!Array.isArray(bounds) || bounds.length !== zoneIds.length) return zoneIds;
+    return zoneIds.map((id, i) => {
+      const lo = i === 0 ? 0 : bounds[i - 1];
+      const hi = bounds[i];
+      return i === zoneIds.length - 1 ? `${id} (${lo}+ ${unit})` : `${id} (${lo}-${hi} ${unit})`;
+    });
+  }
+
+  function drawHrZoneChart(data) {
+    destroyChart('hrZone');
+    const c = data.hrZoneChart;
+    const el = document.getElementById('chart-hrzone');
+    const selected = hrZoneSelection || new Set(c.sports);
+
+    const byWeek = new Map(c.weeks.map((w) => [w, c.zoneIds.map(() => 0)]));
+    for (const r of c.rows) {
+      if (!selected.has(r.sport)) continue;
+      const arr = byWeek.get(r.week);
+      if (!arr) continue;
+      r.minutes.forEach((m, i) => { arr[i] += m; });
+    }
+    const weekTotals = new Map([...byWeek.entries()].map(([w, arr]) => [w, arr.reduce((s, v) => s + v, 0)]));
+
+    const zoneLabels = zoneLabelsFor(c.zoneIds, c.zoneBounds, 'bpm');
+    const datasets = c.zoneIds.map((id, i) => ({
+      type: 'bar',
+      label: zoneLabels[i],
+      data: c.weeks.map((w) => {
+        const minutes = byWeek.get(w)[i];
+        const total = weekTotals.get(w);
+        return { x: w, y: Math.round((minutes / 60) * 10) / 10, pct: total > 0 ? Math.round((minutes / total) * 100) : 0 };
+      }),
+      backgroundColor: ZONE_COLORS[i % ZONE_COLORS.length],
+      stack: 'zones',
+    }));
+
+    charts.hrZone = new Chart(el.getContext('2d'), {
+      data: { datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: { labels: { color: '#eef0f4' } },
+          tooltip: { callbacks: { label: (ctx) => `${ctx.dataset.label} : ${ctx.raw.y.toFixed(1)} h (${ctx.raw.pct}%)` } },
+        },
+        scales: {
+          x: baseTimeScale({ time: { unit: 'week', tooltipFormat: 'dd/MM/yyyy' } }),
+          y: { stacked: true, title: { display: true, text: 'Heures / semaine', color: '#8a91a3' }, ticks: { color: '#8a91a3' }, grid: { color: '#232838' }, afterFit(s) { s.width = 70; } },
+        },
+      },
+    });
+  }
+
+  function renderHrZoneChart(data) {
+    const c = data.hrZoneChart;
+    const wrap = document.getElementById('hrzone-wrap');
+    const empty = document.getElementById('hrzone-empty');
+    const filtersEl = document.getElementById('hrzone-filters');
+
+    if (!c.sports.length) {
+      wrap.style.display = 'none';
+      filtersEl.style.display = 'none';
+      empty.style.display = 'block';
+      return;
+    }
+    wrap.style.display = 'block';
+    filtersEl.style.display = 'flex';
+    empty.style.display = 'none';
+
+    if (!hrZoneSelection) hrZoneSelection = new Set(c.sports);
+    else {
+      hrZoneSelection = new Set([...hrZoneSelection].filter((s) => c.sports.includes(s)));
+      if (!hrZoneSelection.size) hrZoneSelection = new Set(c.sports);
+    }
+
+    filtersEl.innerHTML = c.sports
+      .map(
+        (s) =>
+          `<label><input type="checkbox" class="hrzone-sport" value="${escapeHtml(s)}" ${hrZoneSelection.has(s) ? 'checked' : ''}/> ${escapeHtml(s)}</label>`
+      )
+      .join('');
+    filtersEl.querySelectorAll('.hrzone-sport').forEach((cb) => {
+      cb.addEventListener('change', () => {
+        const checked = [...filtersEl.querySelectorAll('.hrzone-sport:checked')].map((x) => x.value);
+        hrZoneSelection = new Set(checked.length ? checked : c.sports);
+        drawHrZoneChart(data);
+      });
+    });
+
+    drawHrZoneChart(data);
+  }
+
+  // ------------------------------------------------------------
+  // Graphique — Temps hebdomadaire dans les zones de puissance (vélo mesuré, CAP estimée)
+  // ------------------------------------------------------------
+  function drawPowerZoneChart(data) {
+    destroyChart('powerZone');
+    const c = data.powerZoneChart;
+    const el = document.getElementById('chart-powerzone');
+    const selected = powerZoneSelection || new Set(c.sports);
+
+    const byWeek = new Map(c.weeks.map((w) => [w, c.zoneIds.map(() => 0)]));
+    for (const r of c.rows) {
+      if (!selected.has(r.sport)) continue;
+      const arr = byWeek.get(r.week);
+      if (!arr) continue;
+      r.minutes.forEach((m, i) => { arr[i] += m; });
+    }
+    const weekTotals = new Map([...byWeek.entries()].map(([w, arr]) => [w, arr.reduce((s, v) => s + v, 0)]));
+
+    const zoneLabels = zoneLabelsFor(c.zoneIds, c.wattBounds, 'W');
+    const datasets = c.zoneIds.map((id, i) => ({
+      type: 'bar',
+      label: zoneLabels[i],
+      data: c.weeks.map((w) => {
+        const minutes = byWeek.get(w)[i];
+        const total = weekTotals.get(w);
+        return { x: w, y: Math.round((minutes / 60) * 10) / 10, pct: total > 0 ? Math.round((minutes / total) * 100) : 0 };
+      }),
+      backgroundColor: ZONE_COLORS[i % ZONE_COLORS.length],
+      stack: 'zones',
+    }));
+
+    charts.powerZone = new Chart(el.getContext('2d'), {
+      data: { datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: { labels: { color: '#eef0f4' } },
+          tooltip: { callbacks: { label: (ctx) => `${ctx.dataset.label} : ${ctx.raw.y.toFixed(1)} h (${ctx.raw.pct}%)` } },
+        },
+        scales: {
+          x: baseTimeScale({ time: { unit: 'week', tooltipFormat: 'dd/MM/yyyy' } }),
+          y: { stacked: true, title: { display: true, text: 'Heures / semaine', color: '#8a91a3' }, ticks: { color: '#8a91a3' }, grid: { color: '#232838' }, afterFit(s) { s.width = 70; } },
+        },
+      },
+    });
+  }
+
+  function renderPowerZoneChart(data) {
+    const c = data.powerZoneChart;
+    const wrap = document.getElementById('powerzone-wrap');
+    const empty = document.getElementById('powerzone-empty');
+    const filtersEl = document.getElementById('powerzone-filters');
+
+    if (!c.sports.length) {
+      wrap.style.display = 'none';
+      filtersEl.style.display = 'none';
+      empty.style.display = 'block';
+      return;
+    }
+    wrap.style.display = 'block';
+    filtersEl.style.display = 'flex';
+    empty.style.display = 'none';
+
+    if (!powerZoneSelection) powerZoneSelection = new Set(c.sports);
+    else {
+      powerZoneSelection = new Set([...powerZoneSelection].filter((s) => c.sports.includes(s)));
+      if (!powerZoneSelection.size) powerZoneSelection = new Set(c.sports);
+    }
+
+    filtersEl.innerHTML = c.sports
+      .map(
+        (s) =>
+          `<label><input type="checkbox" class="powerzone-sport" value="${escapeHtml(s)}" ${powerZoneSelection.has(s) ? 'checked' : ''}/> ${escapeHtml(s)}</label>`
+      )
+      .join('');
+    filtersEl.querySelectorAll('.powerzone-sport').forEach((cb) => {
+      cb.addEventListener('change', () => {
+        const checked = [...filtersEl.querySelectorAll('.powerzone-sport:checked')].map((x) => x.value);
+        powerZoneSelection = new Set(checked.length ? checked : c.sports);
+        drawPowerZoneChart(data);
+      });
+    });
+
+    drawPowerZoneChart(data);
+  }
+
+  // ------------------------------------------------------------
+  // Graphiques — Efficiency Factor hebdomadaire (Vélo : puissance/FC, CAP : GAP/FC)
+  // ------------------------------------------------------------
+  function renderEfficiencyChart(data) {
+    destroyChart('efBike');
+    destroyChart('efRun');
+    const c = data.efficiencyChart;
+
+    charts.efBike = new Chart(document.getElementById('chart-ef-bike').getContext('2d'), {
+      type: 'line',
+      data: {
+        datasets: [
+          {
+            label: 'EF Vélo (puissance/FC)',
+            data: c.weeks.map((w, i) => ({ x: w, y: c.bike[i] })),
+            borderColor: '#4a90d9',
+            borderWidth: 3,
+            pointRadius: 3,
+            spanGaps: true,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { labels: { color: '#eef0f4' } },
+          tooltip: { callbacks: { label: (ctx) => `EF : ${ctx.raw.y != null ? ctx.raw.y.toFixed(2) : '—'} W/bpm` } },
+        },
+        scales: {
+          x: baseTimeScale({ time: { unit: 'week', tooltipFormat: 'dd/MM/yyyy' } }),
+          y: { title: { display: true, text: 'W / bpm', color: '#8a91a3' }, ticks: { color: '#8a91a3' }, grid: { color: '#232838' }, afterFit(s) { s.width = 70; } },
+        },
+      },
+    });
+
+    charts.efRun = new Chart(document.getElementById('chart-ef-run').getContext('2d'), {
+      type: 'line',
+      data: {
+        datasets: [
+          {
+            label: 'EF CAP (GAP/FC)',
+            data: c.weeks.map((w, i) => ({ x: w, y: c.run[i] })),
+            borderColor: '#ff6b35',
+            borderWidth: 3,
+            pointRadius: 3,
+            spanGaps: true,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { labels: { color: '#eef0f4' } },
+          tooltip: { callbacks: { label: (ctx) => `EF : ${ctx.raw.y != null ? ctx.raw.y.toFixed(3) : '—'} m/s/bpm` } },
+        },
+        scales: {
+          x: baseTimeScale({ time: { unit: 'week', tooltipFormat: 'dd/MM/yyyy' } }),
+          y: { title: { display: true, text: 'm/s / bpm', color: '#8a91a3' }, ticks: { color: '#8a91a3' }, grid: { color: '#232838' }, afterFit(s) { s.width = 70; } },
+        },
+      },
+    });
+  }
+
+  // ------------------------------------------------------------
+  // Graphique — HRV + FC de repos quotidiennes, moyenne mobile 7j + analyse de tendance descriptive
+  // ------------------------------------------------------------
+  function wellnessTrendPill(trend) {
+    if (!trend) return '';
+    const cls = { hrvDown: 'pill-orange', rhrUp: 'pill-orange', both: 'pill-red', returning: 'pill-green', normal: 'pill-green' }[trend.status] || 'pill-orange';
+    return `<span class="pill ${cls}">${escapeHtml(trend.message)}</span>`;
+  }
+
+  function renderWellnessChart(data) {
+    destroyChart('wellness');
+    const c = data.wellnessChart;
+    const wrap = document.getElementById('wellness-wrap');
+    const empty = document.getElementById('wellness-empty');
+    const caption = document.getElementById('wellness-caption');
+
+    if (!c.dates.length) {
+      wrap.style.display = 'none';
+      empty.style.display = 'block';
+      caption.innerHTML = '';
+      return;
+    }
+    wrap.style.display = 'block';
+    empty.style.display = 'none';
+    caption.innerHTML = wellnessTrendPill(c.trend);
+
+    const datasets = [
+      {
+        type: 'line',
+        label: 'HRV',
+        data: c.dates.map((d, i) => ({ x: d, y: c.hrv[i] })),
+        borderColor: 'rgba(74,144,217,0.5)',
+        backgroundColor: 'rgba(74,144,217,0.5)',
+        pointRadius: 2,
+        borderWidth: 0,
+        showLine: false,
+        spanGaps: false,
+        yAxisID: 'yHrv',
+      },
+      {
+        type: 'line',
+        label: 'HRV (moy. 7j)',
+        data: c.dates.map((d, i) => ({ x: d, y: c.hrvRoll7[i] })),
+        borderColor: '#4a90d9',
+        borderWidth: 3,
+        pointRadius: 0,
+        spanGaps: true,
+        yAxisID: 'yHrv',
+      },
+      {
+        type: 'line',
+        label: 'FC repos',
+        data: c.dates.map((d, i) => ({ x: d, y: c.rhr[i] })),
+        borderColor: 'rgba(239,87,87,0.5)',
+        backgroundColor: 'rgba(239,87,87,0.5)',
+        pointRadius: 2,
+        borderWidth: 0,
+        showLine: false,
+        spanGaps: false,
+        yAxisID: 'yRhr',
+      },
+      {
+        type: 'line',
+        label: 'FC repos (moy. 7j)',
+        data: c.dates.map((d, i) => ({ x: d, y: c.rhrRoll7[i] })),
+        borderColor: '#ef5757',
+        borderWidth: 3,
+        pointRadius: 0,
+        spanGaps: true,
+        yAxisID: 'yRhr',
+      },
+    ];
+
+    charts.wellness = new Chart(document.getElementById('chart-wellness').getContext('2d'), {
+      data: { datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: { legend: { labels: { color: '#eef0f4' } } },
+        scales: {
+          x: baseTimeScale(),
+          yHrv: { position: 'left', title: { display: true, text: 'HRV (ms)', color: '#8a91a3' }, ticks: { color: '#8a91a3' }, grid: { color: '#232838' }, afterFit(s) { s.width = 70; } },
+          yRhr: { position: 'right', title: { display: true, text: 'FC repos (bpm)', color: '#8a91a3' }, ticks: { color: '#8a91a3' }, grid: { drawOnChartArea: false }, afterFit(s) { s.width = 70; } },
+        },
+      },
+    });
+  }
+
+  // ------------------------------------------------------------
   // Graphique 4 — ACWR
   // ------------------------------------------------------------
   function renderAcwrChart(data) {
@@ -604,33 +986,6 @@
     });
   }
 
-  // ------------------------------------------------------------
-  // Table détail des séances + debug
-  // ------------------------------------------------------------
-  function renderSessionsTable(data) {
-    const rows = data.sessionsTable
-      .map(
-        (s) => `<tr>
-          <td>${formatFr(s.date)}</td>
-          <td>${escapeHtml(s.name)}</td>
-          <td>${escapeHtml(s.type)}</td>
-          <td>${s.temps}</td>
-          <td>${s.rpe ?? ''}</td>
-          <td>${s.chargeFoster}</td>
-          <td>${s.dplus}</td>
-          <td>${s.distanceKm}</td>
-        </tr>`
-      )
-      .join('');
-    return `
-      <div class="table-scroll">
-        <table>
-          <thead><tr><th>Date</th><th>Nom</th><th>Type</th><th>Temps</th><th>RPE</th><th>Charge Foster</th><th>D+</th><th>Distance km</th></tr></thead>
-          <tbody>${rows || '<tr><td colspan="8">Aucune séance.</td></tr>'}</tbody>
-        </table>
-      </div>`;
-  }
-
   function escapeHtml(str) {
     return String(str ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   }
@@ -652,10 +1007,17 @@
     els.content.innerHTML = `
       ${renderKpis(data)}
 
-      <h2 class="subheader">ACWR — Acute:Chronic Workload Ratio</h2>
-      <div class="card">
-        <div class="chart-wrap"><canvas id="chart-acwr"></canvas></div>
-        <p class="caption">${chronicLoadCaption(data.acwrChart)}</p>
+      <div class="grid-2">
+        <div class="card">
+          <h3 class="card-title">ACWR — Acute:Chronic Workload Ratio</h3>
+          <div class="chart-wrap"><canvas id="chart-acwr"></canvas></div>
+          <p class="caption">${chronicLoadCaption(data.acwrChart)}</p>
+        </div>
+        <div class="card">
+          <h3 class="card-title">Charge Foster — répartition par sport</h3>
+          <div class="chart-wrap"><canvas id="chart-sport-foster"></canvas></div>
+          <p class="caption" id="sport-foster-caption"></p>
+        </div>
       </div>
 
       <details class="expander">
@@ -677,36 +1039,72 @@
         <p>Une semaine de récupération avec un ACWR faible est normale et peut être parfaitement souhaitable dans une planification trail.</p>
       </details>
 
-      <h2 class="subheader">Charge Foster — répartition par sport</h2>
-      <div class="card">
-        <div class="chart-wrap"><canvas id="chart-sport-foster"></canvas></div>
-        <p class="caption" id="sport-foster-caption"></p>
+      <div class="grid-2">
+        <div class="card">
+          <h3 class="card-title">TRIMP hebdomadaire</h3>
+          <div class="chart-wrap"><canvas id="chart-trimp"></canvas></div>
+          <p class="caption">2e mesure de charge, en complément du Foster/sRPE. Barres claires = TRIMP planifié estimé (pas de FC prévisionnelle réelle).</p>
+        </div>
+        <div class="card">
+          <h3 class="card-title">HRV et FC de repos quotidiennes</h3>
+          <div class="chart-wrap" id="wellness-wrap"><canvas id="chart-wellness"></canvas></div>
+          <p class="alert alert-info" id="wellness-empty" style="display:none;">Aucune donnée HRV / FC de repos disponible sur la période sélectionnée (nécessite un capteur synchronisé sur Intervals.icu).</p>
+          <p class="caption" id="wellness-caption"></p>
+        </div>
       </div>
 
-      <h2 class="subheader">CAP — Km, D+ et heures hebdomadaires</h2>
-      <div class="card">
-        <div class="chart-wrap"><canvas id="chart-cap"></canvas></div>
-        <p class="alert alert-info" id="cap-empty" style="display:none;">Aucune activité CAP sur la période sélectionnée.</p>
+      <div class="grid-2">
+        <div class="card">
+          <h3 class="card-title">CAP — Km, D+ et heures hebdomadaires</h3>
+          <div class="chart-wrap"><canvas id="chart-cap"></canvas></div>
+          <p class="alert alert-info" id="cap-empty" style="display:none;">Aucune activité CAP sur la période sélectionnée.</p>
+        </div>
+        <div class="card">
+          <h3 class="card-title">Vélo — Km, D+, heures et kJ hebdomadaires</h3>
+          <div class="chart-wrap"><canvas id="chart-bike"></canvas></div>
+          <p class="alert alert-info" id="bike-empty" style="display:none;">Aucune activité vélo sur la période sélectionnée.</p>
+        </div>
       </div>
 
-      <h2 class="subheader">Vélo — Km, D+, heures et kJ hebdomadaires</h2>
-      <div class="card">
-        <div class="chart-wrap"><canvas id="chart-bike"></canvas></div>
-        <p class="alert alert-info" id="bike-empty" style="display:none;">Aucune activité vélo sur la période sélectionnée.</p>
+      <h2 class="subheader">Efficiency Factor hebdomadaire</h2>
+      <div class="grid-2">
+        <div class="card">
+          <div class="chart-wrap"><canvas id="chart-ef-bike"></canvas></div>
+          <p class="caption">Vélo : puissance moyenne / FC moyenne.</p>
+        </div>
+        <div class="card">
+          <div class="chart-wrap"><canvas id="chart-ef-run"></canvas></div>
+          <p class="caption">CAP : GAP / FC moyenne.</p>
+        </div>
       </div>
 
-      <details class="expander">
-        <summary>Détail des séances</summary>
-        ${renderSessionsTable(data)}
-      </details>
+      <div class="grid-2">
+        <div class="card">
+          <h3 class="card-title">Temps hebdomadaire dans les zones FC</h3>
+          <div class="checkbox-group" id="hrzone-filters"></div>
+          <div class="chart-wrap" id="hrzone-wrap"><canvas id="chart-hrzone"></canvas></div>
+          <p class="alert alert-info" id="hrzone-empty" style="display:none;">Aucune donnée de zones FC sur la période sélectionnée.</p>
+        </div>
+        <div class="card">
+          <h3 class="card-title">Temps hebdomadaire dans les zones de puissance — Vélo</h3>
+          <div class="checkbox-group" id="powerzone-filters"></div>
+          <div class="chart-wrap" id="powerzone-wrap"><canvas id="chart-powerzone"></canvas></div>
+          <p class="alert alert-info" id="powerzone-empty" style="display:none;">Aucune donnée de puissance sur la période sélectionnée.</p>
+        </div>
+      </div>
 
       <hr class="sep" />
       <p class="caption">Foster = icu_rpe × moving_time (minutes).</p>
     `;
 
     renderSportFosterChart(data);
+    renderTrimpChart(data);
+    renderHrZoneChart(data);
+    renderPowerZoneChart(data);
     renderCapChart(data);
     renderBikeChart(data);
+    renderEfficiencyChart(data);
+    renderWellnessChart(data);
     renderAcwrChart(data);
 
     if (els.toggleNotesBtn) {

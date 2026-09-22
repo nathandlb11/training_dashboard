@@ -5,7 +5,7 @@ const { buildDashboardData } = require('../src/dashboardData');
 const { getAthleteOptions } = require('../src/athletes');
 const { addDaysIso, todayIso } = require('../src/dateUtils');
 const { fetchIntervalsEvents } = require('../src/intervalsApi');
-const { prepareActivities } = require('../src/calculations');
+const { prepareActivities, collectZoneIds, normalizeZoneTimes } = require('../src/calculations');
 const { rowsToCsv } = require('../src/csvExport');
 
 const router = express.Router();
@@ -86,29 +86,6 @@ router.get('/api/dashboard-data', requireWidgetToken, async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
-
-// Normalise icu_hr_zone_times (tableau de secondes) et icu_zone_times/pace_zone_times (tableau de
-// {id, secs}) vers une forme commune [{id, secs}], pour pouvoir générer des colonnes CSV dynamiques.
-function normalizeZoneTimes(raw) {
-  if (!Array.isArray(raw)) return [];
-  return raw.map((z, i) =>
-    z && typeof z === 'object' ? { id: z.id || `Z${i + 1}`, secs: Number(z.secs) || 0 } : { id: `Z${i + 1}`, secs: Number(z) || 0 }
-  );
-}
-
-const ZONE_ID_ORDER = ['Z1', 'Z2', 'Z3', 'Z4', 'Z5', 'Z6', 'Z7', 'SS'];
-
-// Union ordonnée des id de zones (Z1..Z7, SS...) réellement présents sur au moins une activité —
-// toutes les activités n'ont pas de capteur puissance/FC/allure, donc l'ensemble varie.
-function collectZoneIds(activities, field) {
-  const seen = new Set();
-  for (const a of activities) {
-    for (const z of normalizeZoneTimes(a[field])) seen.add(z.id);
-  }
-  const ordered = ZONE_ID_ORDER.filter((id) => seen.has(id));
-  const extra = [...seen].filter((id) => !ZONE_ID_ORDER.includes(id)).sort();
-  return [...ordered, ...extra];
-}
 
 function zoneMinutes(activity, field, id) {
   const z = normalizeZoneTimes(activity[field]).find((zz) => zz.id === id);

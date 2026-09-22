@@ -55,6 +55,10 @@ function prepareActivities(rawEvents) {
       icu_normalized_watts: NUM_OR_NULL(e.icu_normalized_watts),
       average_heartrate: NUM_OR_NULL(e.average_heartrate),
       max_heartrate: NUM_OR_NULL(e.max_heartrate),
+      trimp: NUM_OR_NULL(e.trimp),
+      gap: NUM_OR_NULL(e.gap),
+      icu_efficiency_factor: NUM_OR_NULL(e.icu_efficiency_factor),
+      decoupling: NUM_OR_NULL(e.decoupling),
     };
   });
 
@@ -290,6 +294,32 @@ function calculateForecastAcwr(pastActivities, futureDaily) {
   return weeklyAll;
 }
 
+// ============================================================
+// ZONES (FC / puissance / allure)
+// ============================================================
+
+const ZONE_ID_ORDER = ['Z1', 'Z2', 'Z3', 'Z4', 'Z5', 'Z6', 'Z7', 'SS'];
+
+/** Normalise icu_hr_zone_times (tableau de secondes) et icu_zone_times/pace_zone_times (tableau de
+ * {id, secs}) vers une forme commune [{id, secs}]. */
+function normalizeZoneTimes(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((z, i) =>
+    z && typeof z === 'object' ? { id: z.id || `Z${i + 1}`, secs: Number(z.secs) || 0 } : { id: `Z${i + 1}`, secs: Number(z) || 0 }
+  );
+}
+
+/** Union ordonnée des id de zones (Z1..Z7, SS...) réellement présents sur au moins une activité. */
+function collectZoneIds(activities, field) {
+  const seen = new Set();
+  for (const a of activities) {
+    for (const z of normalizeZoneTimes(a[field])) seen.add(z.id);
+  }
+  const ordered = ZONE_ID_ORDER.filter((id) => seen.has(id));
+  const extra = [...seen].filter((id) => !ZONE_ID_ORDER.includes(id)).sort();
+  return [...ordered, ...extra];
+}
+
 module.exports = {
   prepareActivities,
   dailyLoad,
@@ -303,4 +333,7 @@ module.exports = {
   FORECAST_BIKE_TYPES,
   normalizeSportKey,
   sportForWorkoutType,
+  ZONE_ID_ORDER,
+  normalizeZoneTimes,
+  collectZoneIds,
 };

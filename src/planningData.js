@@ -297,4 +297,11 @@ async function getActivityIntervals(apiKey, activityId, { athleteId = '0', sport
     });
 }
 
-module.exports = { getChronicLoad, getPlannedCalendar, getPlannedCalendarWithRaces, getWorkoutLibrary, getActivityIntervals };
+module.exports = {
+  getChronicLoad,
+  getPlannedCalendar,
+  getPlannedCalendarWithRaces,
+  getWorkoutLibrary,
+  getActivityIntervals,
+  estimateAvgWatts,
+};

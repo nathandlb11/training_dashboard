@@ -9,10 +9,16 @@ filtres interactifs.
 ## Fonctionnalités
 
 - **Dashboard** : charge Foster quotidienne par sport (+ courbe 7 jours
-  glissants et prolongation planifiée), volume CAP (km / D+ / heures),
-  volume vélo (km / D+ / heures / kJ), ACWR (avec zone de référence
-  1,0–1,3, prévisionnel à partir des séances planifiées et marqueurs de
-  courses), détail des séances.
+  glissants et prolongation planifiée), TRIMP hebdomadaire (2e mesure de
+  charge, réel + estimation planifiée à partir des zones de la séance ou,
+  à défaut, du TRIMP moyen des séances similaires), volume CAP (km / D+ /
+  heures), volume vélo (km / D+ / heures / kJ), temps hebdomadaire dans
+  les zones FC et dans les zones de puissance (vélo mesuré, CAP estimée —
+  filtrables par sport), ACWR (avec zone de référence 1,0–1,3,
+  prévisionnel à partir des séances planifiées et marqueurs de courses),
+  Efficiency Factor hebdomadaire (vélo : puissance/FC, CAP : GAP/FC), HRV
+  et FC de repos quotidiennes (moyenne mobile 7 jours + analyse descriptive
+  de tendance).
 - **Planification & envoi** : bibliothèque de séances (Run/Ride,
   templates simples ou échauffement/répétitions/récup/retour au calme)
   avec génération automatique de la description au format Intervals.icu,

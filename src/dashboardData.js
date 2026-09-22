@@ -1,6 +1,6 @@
 'use strict';
 
-const { fetchIntervalsEvents, fetchCalendarEvents } = require('./intervalsApi');
+const { fetchIntervalsEvents, fetchCalendarEvents, fetchWellness, fetchAthleteProfile } = require('./intervalsApi');
 const {
   prepareActivities,
   dailyLoad,
@@ -11,14 +11,20 @@ const {
   FORECAST_RUN_TYPES,
   FORECAST_BIKE_TYPES,
   normalizeSportKey,
+  normalizeZoneTimes,
 } = require('./calculations');
 const { dateOnly, addDaysIso, weekStartMonday, dateRangeIso, todayIso, compareIso } = require('./dateUtils');
-const { fmtTime } = require('./format');
+const { fmtTime, parseDescriptionSteps } = require('./format');
 const sessionLoad = require('./sessionLoad.json');
 
 const NUM = (v, def = 0) => {
   const n = Number(v);
   return Number.isFinite(n) ? n : def;
+};
+const NUM_OR_NULL = (v) => {
+  if (v === null || v === undefined || v === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
 };
 
 const RUN_TRAIL = FORECAST_RUN_TYPES;
@@ -282,6 +288,404 @@ function weeklySportAgg(rows, periodStart, periodEnd) {
     .map((w) => ({ week: w.week, km: w.km, dplus: w.dplus, heures: w.heuresSecs / 3600, kj: w.kj }));
 }
 
+function groupMean(rows, keyFn, valFn) {
+  const sums = new Map();
+  const counts = new Map();
+  for (const r of rows) {
+    const k = keyFn(r);
+    const v = valFn(r);
+    if (v == null || !Number.isFinite(v)) continue;
+    sums.set(k, (sums.get(k) || 0) + v);
+    counts.set(k, (counts.get(k) || 0) + 1);
+  }
+  const out = new Map();
+  for (const [k, s] of sums) out.set(k, s / counts.get(k));
+  return out;
+}
+
+function mean(arr) {
+  const vals = (arr || []).filter((v) => v != null && Number.isFinite(v));
+  return vals.length ? vals.reduce((s, v) => s + v, 0) / vals.length : null;
+}
+
+/** Libellé de sport affiché (regroupe les variantes course/vélo, comme le graphique Foster par sport). */
+function sportLabelFor(type) {
+  const key = normalizeSportKey(type);
+  if (RUN_TRAIL.has(key)) return 'Run / Trail';
+  if (BIKE_TYPES.has(key)) return 'Ride';
+  return type || 'Autre';
+}
+
+// ------------------------------------------------------------
+// TRIMP hebdomadaire (2e mesure de charge, en complément du Foster/sRPE) + estimation planifiée
+// ------------------------------------------------------------
+function buildTrimpChart(realActivities, weeks, plannedTrimpByWeek) {
+  const rows = realActivities.filter((a) => a.date && a.trimp != null);
+  const byWeek = new Map();
+  for (const r of rows) {
+    const week = weekStartMonday(r.date);
+    byWeek.set(week, (byWeek.get(week) || 0) + r.trimp);
+  }
+  return {
+    weeks,
+    trimp: weeks.map((w) => Math.round(byWeek.get(w) || 0)),
+    plannedTrimp: weeks.map((w) => (plannedTrimpByWeek.has(w) ? Math.round(plannedTrimpByWeek.get(w)) : null)),
+  };
+}
+
+function intensityBucket(pct) {
+  if (pct == null || !Number.isFinite(pct)) return null;
+  if (pct < 75) return 'easy';
+  if (pct < 90) return 'moderate';
+  return 'hard';
+}
+
+/** Intensité moyenne (pondérée par la durée) des étapes d'une description planifiée, en % LTHR/FTP —
+ * mélange volontairement les deux échelles (toutes deux des % d'un seuil propre au sport) pour
+ * classer l'intensité en paliers simples (utilisé seulement pour choisir quelle moyenne historique
+ * comparer, pas comme valeur physiologique exacte). `null` si la description n'a aucune étape avec
+ * un pourcentage de zone (ex: renfo, description libre). */
+function plannedIntensityPct(description) {
+  const steps = parseDescriptionSteps(description).filter((s) => s.lowPct != null && s.highPct != null && s.durationMin > 0);
+  if (!steps.length) return null;
+  const totalMin = steps.reduce((s, st) => s + st.durationMin, 0);
+  if (!(totalMin > 0)) return null;
+  const weighted = steps.reduce((s, st) => s + ((st.lowPct + st.highPct) / 2) * st.durationMin, 0);
+  return weighted / totalMin;
+}
+
+/** Moyenne de TRIMP/minute des séances réelles, par sport et par palier d'intensité (icu_intensity),
+ * avec repli sur la moyenne du sport seul puis sur la moyenne globale. Sert de base à l'estimation
+ * du TRIMP d'une séance planifiée (pas de FC prévisionnelle réelle disponible pour la calculer). */
+function buildTrimpPerMinuteLookup(activities) {
+  const bySportBucket = new Map();
+  const bySport = new Map();
+  let globalSum = 0;
+  let globalCount = 0;
+  for (const a of activities) {
+    if (a.trimp == null || !(a.moving_time > 0)) continue;
+    const perMin = a.trimp / (a.moving_time / 60);
+    if (!Number.isFinite(perMin)) continue;
+    const sport = sportLabelFor(a.type);
+    const bucket = intensityBucket(NUM_OR_NULL(a.icu_intensity));
+    if (bucket) {
+      const key = `${sport}\u0000${bucket}`;
+      const acc = bySportBucket.get(key) || { sum: 0, count: 0 };
+      acc.sum += perMin;
+      acc.count += 1;
+      bySportBucket.set(key, acc);
+    }
+    const sAcc = bySport.get(sport) || { sum: 0, count: 0 };
+    sAcc.sum += perMin;
+    sAcc.count += 1;
+    bySport.set(sport, sAcc);
+    globalSum += perMin;
+    globalCount += 1;
+  }
+  return (sport, bucket) => {
+    if (bucket) {
+      const acc = bySportBucket.get(`${sport}\u0000${bucket}`);
+      if (acc && acc.count) return acc.sum / acc.count;
+    }
+    const sAcc = bySport.get(sport);
+    if (sAcc && sAcc.count) return sAcc.sum / sAcc.count;
+    return globalCount ? globalSum / globalCount : null;
+  };
+}
+
+/** Estimation du TRIMP hebdomadaire des séances planifiées (aujourd'hui + futur, non déjà
+ * réalisées) : à défaut de FC prévisionnelle réelle, on estime un "TRIMP/minute" à partir des
+ * séances réelles similaires — même sport ET même palier d'intensité déduit des zones %LTHR/FTP de
+ * la description quand elles existent, sinon juste le même sport (ex: renfo, sans zone dans sa
+ * description libre). */
+function buildPlannedTrimpByWeek(rawFutureEvents, realActivities, realActivityDates, today) {
+  const lookup = buildTrimpPerMinuteLookup(realActivities);
+  const rows = (rawFutureEvents || [])
+    .map((e) => ({
+      ...e,
+      date: dateOnly(e.start_date_local || e.start_date),
+      category: String(e.category || '').toUpperCase(),
+      moving_time: NUM(e.moving_time, 0),
+    }))
+    .filter(
+      (e) =>
+        e.date &&
+        ['WORKOUT', 'PLAN', 'RACE_A', 'RACE_B', 'RACE_C'].includes(e.category) &&
+        compareIso(e.date, today) >= 0 &&
+        !realActivityDates.has(e.date) &&
+        e.moving_time > 0
+    );
+
+  const byWeek = new Map();
+  for (const e of rows) {
+    const sport = sportLabelFor(e.type);
+    const bucket = intensityBucket(plannedIntensityPct(e.description));
+    const perMin = lookup(sport, bucket);
+    if (perMin == null) continue;
+    const week = weekStartMonday(e.date);
+    byWeek.set(week, (byWeek.get(week) || 0) + perMin * (e.moving_time / 60));
+  }
+  return byWeek;
+}
+
+// ------------------------------------------------------------
+// Temps hebdomadaire dans les zones FC, ventilé par sport (filtrable côté client)
+// Modèle simplifié à 3 paliers (regroupement des 7 zones Intervals.icu par numéro de zone) :
+// Z1 seule, Z2+Z3, Z4/5/6/7 — plus lisible qu'un empilement à 7 zones.
+// ------------------------------------------------------------
+const HR_ZONE_GROUP_IDS = ['Z1', 'Z2-Z3', 'Z4-Z7'];
+
+function hrZoneGroupIndex(id) {
+  const n = parseInt(String(id).replace(/\D/g, ''), 10);
+  if (n === 1) return 0;
+  if (n === 2 || n === 3) return 1;
+  if (n >= 4) return 2;
+  return null; // ids non numériques (ex: 'SS') hors modèle FC
+}
+
+function buildHrZoneChart(f, canonicalWeeks) {
+  const zoneField = 'icu_hr_zone_times';
+  const rows = f.filter((a) => a.date && Array.isArray(a[zoneField]) && a[zoneField].length);
+  if (!rows.length) return { weeks: canonicalWeeks, zoneIds: [], zoneBounds: null, sports: [], rows: [] };
+
+  const byKey = new Map(); // `${week}\u0000${sport}` -> minutes[3] (Z1 / Z2-Z3 / Z4-Z7)
+  const sportsSeen = new Set();
+  for (const a of rows) {
+    const week = weekStartMonday(a.date);
+    const sport = sportLabelFor(a.type);
+    sportsSeen.add(sport);
+    const key = `${week}\u0000${sport}`;
+    const arr = byKey.get(key) || [0, 0, 0];
+    for (const z of normalizeZoneTimes(a[zoneField])) {
+      const gi = hrZoneGroupIndex(z.id);
+      if (gi != null) arr[gi] += z.secs / 60;
+    }
+    byKey.set(key, arr);
+  }
+
+  // Bornes (bpm) des 3 paliers : haut de Z1, haut de Z3, haut de Z7 — depuis l'activité la plus
+  // récente qui expose ses 7 zones FC.
+  let zoneBounds = null;
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const b = rows[i].icu_hr_zones;
+    if (Array.isArray(b) && b.length >= 7) {
+      zoneBounds = [b[0], b[2], b[6]];
+      break;
+    }
+  }
+
+  const outRows = [];
+  for (const [key, minutes] of byKey) {
+    const [week, sport] = key.split('\u0000');
+    outRows.push({ week, sport, minutes: minutes.map((m) => Math.round(m)) });
+  }
+
+  return {
+    weeks: canonicalWeeks,
+    zoneIds: HR_ZONE_GROUP_IDS,
+    zoneBounds,
+    sports: [...sportsSeen].sort(),
+    rows: outRows,
+  };
+}
+
+// ------------------------------------------------------------
+// Temps hebdomadaire dans les zones de puissance — Vélo uniquement (icu_zone_times, mesuré).
+// Modèle simplifié à 3 paliers en %FTP : < 75%, 75-100%, > 100%.
+// ------------------------------------------------------------
+const POWER_ZONE_GROUP_IDS = ['< 75% FTP', '75-100% FTP', '> 100% FTP'];
+
+/** Répartit les secondes d'une zone Coggan [lowPct, highPct[ (en %FTP) entre nos 3 paliers
+ * <75/75-100/>100%, au prorata du recouvrement — approximation qui suppose le temps réparti
+ * uniformément dans la zone d'origine (on n'a que le total par zone, pas la série watts brute). */
+function splitSecsByFtpBucket(lowPct, highPct, secs) {
+  const span = highPct - lowPct;
+  if (!(span > 0) || !(secs > 0)) return [0, 0, 0];
+  const ov1 = Math.max(0, Math.min(highPct, 75) - lowPct);
+  const ov2 = Math.max(0, Math.min(highPct, 100) - Math.max(lowPct, 75));
+  const ov3 = Math.max(0, highPct - Math.max(lowPct, 100));
+  return [(secs * ov1) / span, (secs * ov2) / span, (secs * ov3) / span];
+}
+
+function buildPowerZoneChart(f, canonicalWeeks, profile) {
+  const rideSettings =
+    profile && Array.isArray(profile.sportSettings) ? profile.sportSettings.find((s) => Array.isArray(s.types) && s.types.includes('Ride')) : null;
+  const ftp = rideSettings && rideSettings.ftp > 0 ? rideSettings.ftp : null;
+  const pctBounds = rideSettings && Array.isArray(rideSettings.power_zones) ? rideSettings.power_zones : null;
+
+  const zoneField = 'icu_zone_times';
+  const rideRows = f.filter((a) => a.date && BIKE_TYPES.has(normalizeSportKey(a.type)) && Array.isArray(a[zoneField]) && a[zoneField].length);
+  if (!rideRows.length) return { weeks: canonicalWeeks, zoneIds: [], wattBounds: null, sports: [], rows: [] };
+
+  const byKey = new Map(); // `${week}\u0000${sport}` -> minutes[3] (<75% / 75-100% / >100% FTP)
+  const sportsSeen = new Set();
+
+  for (const a of rideRows) {
+    const week = weekStartMonday(a.date);
+    const sport = sportLabelFor(a.type);
+    sportsSeen.add(sport);
+    const key = `${week}\u0000${sport}`;
+    const arr = byKey.get(key) || [0, 0, 0];
+    normalizeZoneTimes(a[zoneField]).forEach((z, i) => {
+      if (z.id === 'SS') return; // sweet-spot, hors modèle Coggan à 7 paliers, ignorée
+      if (pctBounds && pctBounds[i] != null) {
+        const lowPct = i === 0 ? 0 : pctBounds[i - 1];
+        const [s1, s2, s3] = splitSecsByFtpBucket(lowPct, pctBounds[i], z.secs);
+        arr[0] += s1 / 60;
+        arr[1] += s2 / 60;
+        arr[2] += s3 / 60;
+      } else {
+        // Pas de %FTP configuré côté athlète : repli grossier par numéro de zone Coggan.
+        const gi = hrZoneGroupIndex(z.id);
+        if (gi != null) arr[gi] += z.secs / 60;
+      }
+    });
+    byKey.set(key, arr);
+  }
+
+  const wattBounds = ftp ? [Math.round(ftp * 0.75), Math.round(ftp), Math.round(ftp)] : null;
+
+  const outRows = [];
+  for (const [key, minutes] of byKey) {
+    const [week, sport] = key.split('\u0000');
+    outRows.push({ week, sport, minutes: minutes.map((m) => Math.round(m)) });
+  }
+
+  return {
+    weeks: canonicalWeeks,
+    zoneIds: POWER_ZONE_GROUP_IDS,
+    wattBounds,
+    sports: [...sportsSeen].sort(),
+    rows: outRows,
+  };
+}
+
+// ------------------------------------------------------------
+// Efficiency Factor hebdomadaire — Vélo (puissance/FC) & CAP (GAP/FC)
+// ------------------------------------------------------------
+function buildEfficiencyChart(f, canonicalWeeks) {
+  const bikeRows = f.filter(
+    (a) => a.date && BIKE_TYPES.has(normalizeSportKey(a.type)) && a.icu_efficiency_factor != null && a.icu_efficiency_factor > 0
+  );
+  const runRows = f
+    .filter((a) => a.date && RUN_TRAIL.has(normalizeSportKey(a.type)) && a.gap != null && a.gap > 0 && a.average_heartrate > 0)
+    .map((a) => ({ date: a.date, ef: a.gap / a.average_heartrate }));
+
+  const bikeByWeek = groupMean(bikeRows, (a) => weekStartMonday(a.date), (a) => a.icu_efficiency_factor);
+  const runByWeek = groupMean(runRows, (r) => weekStartMonday(r.date), (r) => r.ef);
+
+  return {
+    weeks: canonicalWeeks,
+    bike: canonicalWeeks.map((w) => (bikeByWeek.has(w) ? Math.round(bikeByWeek.get(w) * 100) / 100 : null)),
+    run: canonicalWeeks.map((w) => (runByWeek.has(w) ? Math.round(runByWeek.get(w) * 1000) / 1000 : null)),
+  };
+}
+
+// ------------------------------------------------------------
+// HRV + FC de repos quotidiennes, moyenne mobile 7j + détection descriptive de tendance
+// ------------------------------------------------------------
+const WELLNESS_HRV_DROP_PCT = -5;
+const WELLNESS_RHR_RISE_PCT = 5;
+
+function rolling7(rows, field) {
+  return rows.map((r, i) => {
+    const start = Math.max(0, i - 6);
+    return mean(rows.slice(start, i + 1).map((x) => x[field]));
+  });
+}
+
+/** Delta (%) entre la moyenne des 7 derniers jours d'une fenêtre et la moyenne des 21 jours qui précèdent. */
+function trendDeltaPct(rows, field) {
+  const n = rows.length;
+  if (n < 8) return null;
+  const recent = mean(rows.slice(Math.max(0, n - 7)).map((r) => r[field]));
+  const baseline = mean(rows.slice(Math.max(0, n - 28), Math.max(0, n - 7)).map((r) => r[field]));
+  if (recent == null || !baseline) return null;
+  return ((recent - baseline) / baseline) * 100;
+}
+
+/** Analyse de tendance simple et descriptive (pas de diagnostic) : détecte HRV en baisse, FC repos en
+ * hausse, la combinaison des deux, ou un retour vers la baseline après un écart récent. */
+function computeWellnessTrend(rows) {
+  if (rows.length < 15) return null;
+
+  const hrvDeltaPct = trendDeltaPct(rows, 'hrv');
+  const rhrDeltaPct = trendDeltaPct(rows, 'rhr');
+  if (hrvDeltaPct == null && rhrDeltaPct == null) return null;
+
+  const hrvDown = hrvDeltaPct != null && hrvDeltaPct <= WELLNESS_HRV_DROP_PCT;
+  const rhrUp = rhrDeltaPct != null && rhrDeltaPct >= WELLNESS_RHR_RISE_PCT;
+
+  // Statut de tendance tel qu'il aurait été calculé il y a 7 jours, pour détecter un "retour vers la
+  // baseline" (écart présent auparavant, résorbé aujourd'hui).
+  let wasAbnormal = false;
+  if (rows.length >= 35) {
+    const prevRows = rows.slice(0, rows.length - 7);
+    const prevHrvDelta = trendDeltaPct(prevRows, 'hrv');
+    const prevRhrDelta = trendDeltaPct(prevRows, 'rhr');
+    wasAbnormal =
+      (prevHrvDelta != null && prevHrvDelta <= WELLNESS_HRV_DROP_PCT) || (prevRhrDelta != null && prevRhrDelta >= WELLNESS_RHR_RISE_PCT);
+  }
+
+  let status;
+  let message;
+  if (hrvDown && rhrUp) {
+    status = 'both';
+    message =
+      "HRV en baisse et FC de repos en hausse par rapport à la tendance des dernières semaines — signe descriptif de fatigue accumulée, à replacer dans le contexte (charge récente, sommeil, stress).";
+  } else if (hrvDown) {
+    status = 'hrvDown';
+    message = 'HRV en baisse par rapport à la tendance habituelle des dernières semaines.';
+  } else if (rhrUp) {
+    status = 'rhrUp';
+    message = 'FC de repos en hausse par rapport à la tendance habituelle des dernières semaines.';
+  } else if (wasAbnormal) {
+    status = 'returning';
+    message = 'Retour vers la tendance habituelle (HRV / FC de repos) après un écart récent.';
+  } else {
+    status = 'normal';
+    message = 'HRV et FC de repos dans la tendance habituelle.';
+  }
+
+  return { status, message, hrvDeltaPct, rhrDeltaPct };
+}
+
+async function buildWellnessChart(apiKey, athleteId, historyStart, historyEnd, pStart, pEnd) {
+  const empty = { dates: [], hrv: [], hrvRoll7: [], rhr: [], rhrRoll7: [], trend: null };
+  let raw;
+  try {
+    raw = await fetchWellness(apiKey, historyStart, historyEnd, athleteId);
+  } catch (e) {
+    return empty;
+  }
+  if (!raw || !raw.length) return empty;
+
+  const rows = raw
+    .map((w) => ({ date: w.id, hrv: NUM_OR_NULL(w.hrv), rhr: NUM_OR_NULL(w.restingHR) }))
+    .filter((r) => r.date && (r.hrv != null || r.rhr != null))
+    .sort((a, b) => compareIso(a.date, b.date));
+  if (!rows.length) return empty;
+
+  const hrvRoll7 = rolling7(rows, 'hrv');
+  const rhrRoll7 = rolling7(rows, 'rhr');
+  const trend = computeWellnessTrend(rows);
+
+  const display = [];
+  for (let i = 0; i < rows.length; i++) {
+    if (compareIso(rows[i].date, pStart) < 0 || compareIso(rows[i].date, pEnd) > 0) continue;
+    display.push({ date: rows[i].date, hrv: rows[i].hrv, rhr: rows[i].rhr, hrvRoll7: hrvRoll7[i], rhrRoll7: rhrRoll7[i] });
+  }
+
+  return {
+    dates: display.map((r) => r.date),
+    hrv: display.map((r) => r.hrv),
+    hrvRoll7: display.map((r) => r.hrvRoll7),
+    rhr: display.map((r) => r.rhr),
+    rhrRoll7: display.map((r) => r.rhrRoll7),
+    trend,
+  };
+}
+
 async function buildDashboardData({
   apiKey,
   athleteId = '0',
@@ -504,18 +908,26 @@ async function buildDashboardData({
   };
 
   // ------------------------------------------------------------
-  // Détail des séances
+  // TRIMP (+ planifié) / zones FC / zones puissance / Efficiency Factor / HRV+RHR
   // ------------------------------------------------------------
-  const sessionsTable = f.map((a) => ({
-    date: a.date,
-    name: a.name,
-    type: a.type,
-    temps: fmtTime(a.moving_time),
-    rpe: a.icu_rpe,
-    chargeFoster: Math.round(a.foster_load),
-    dplus: Math.round(NUM(a.total_elevation_gain, 0)),
-    distanceKm: Math.round((NUM(a.distance, 0) / 1000) * 10) / 10,
-  }));
+  const canonicalWeeks = metricsDisplay.map((m) => m.week);
+  const plannedTrimpByWeek = buildPlannedTrimpByWeek(futureRaw, dfUntilPeriodEnd, realActivityDates, today);
+  const trimpChart = buildTrimpChart(dfUntilPeriodEnd, loadBarWeeks, plannedTrimpByWeek);
+  const hrZoneChart = buildHrZoneChart(f, canonicalWeeks);
+  const efficiencyChart = buildEfficiencyChart(f, canonicalWeeks);
+
+  let athleteProfile = null;
+  let wellnessChart = { dates: [], hrv: [], hrvRoll7: [], rhr: [], rhrRoll7: [], trend: null };
+  try {
+    [athleteProfile, wellnessChart] = await Promise.all([
+      fetchAthleteProfile(apiKey, athleteId).catch(() => null),
+      buildWellnessChart(apiKey, athleteId, historyStart, historyEnd, pStart, pEnd),
+    ]);
+  } catch (e) {
+    // Défensif : ces métriques ne doivent jamais faire échouer tout le dashboard (ex: compte sans
+    // accès au profil / au bien-être, ou API momentanément indisponible).
+  }
+  const powerZoneChart = buildPowerZoneChart(f, canonicalWeeks, athleteProfile);
 
   return {
     empty: false,
@@ -525,7 +937,11 @@ async function buildDashboardData({
     capChart,
     bikeChart,
     acwrChart,
-    sessionsTable,
+    trimpChart,
+    hrZoneChart,
+    powerZoneChart,
+    efficiencyChart,
+    wellnessChart,
     currentWeekSessions,
     notes: forecast.notes,
     forecastError,

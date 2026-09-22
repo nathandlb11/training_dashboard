@@ -184,6 +184,20 @@ async function fetchAthleteProfile(apiKey, athleteId = '0') {
   return result;
 }
 
+/** Récupère les données de bien-être quotidiennes (HRV, FC repos, sommeil, poids...) sur une période. */
+async function fetchWellness(apiKey, oldest, newest, athleteId = '0') {
+  const cacheKey = ['wellness', apiKey, oldest, newest, athleteId];
+  const cached = cache.get(cacheKey);
+  if (cached !== undefined) return cached;
+
+  const result = await intervalsApiRequest('GET', `/athlete/${athleteId}/wellness.json`, apiKey, {
+    params: { oldest, newest },
+  });
+  const wellness = Array.isArray(result) ? result : [];
+  cache.set(cacheKey, wellness);
+  return wellness;
+}
+
 module.exports = {
   intervalsApiRequest,
   fetchAthleteSummary,
@@ -196,4 +210,5 @@ module.exports = {
   fetchWorkoutLibrary,
   fetchActivityIntervals,
   fetchAthleteProfile,
+  fetchWellness,
 };
